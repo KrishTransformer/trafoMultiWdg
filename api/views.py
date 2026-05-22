@@ -58,6 +58,9 @@ def _build_multi_winding(payload):
     if multi_winding is None:
         raise ValueError("Request body must be a JSON object.")
 
+    if "windingSelection" in payload:
+        multi_winding.windings = payload["windingSelection"]
+
     multi_winding.lvWindings = _build_model_instance(Windings, payload.get("lvWindings"))
     multi_winding.hvWindings = _build_model_instance(Windings, payload.get("hvWindings"))
     multi_winding.fineWindings = _build_model_instance(Windings, payload.get("fineWindings"))
@@ -73,6 +76,9 @@ def _build_multi_winding(payload):
         "transCostType",
         "lvWindingType",
         "hvWindingType",
+        "corseWindingType",
+        "fineWindingType",
+        "outerWindingType",
         "limitEz",
         "buildFactor",
         "lvConductorFlag",
@@ -101,5 +107,9 @@ def multi_wdg_calculator(request):
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
 
-    formula_payload = calculate_circ_wdg(multi_winding)
+    try:
+        formula_payload = calculate_circ_wdg(multi_winding)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
     return JsonResponse(_serialize_formula_payload(formula_payload), status=200)

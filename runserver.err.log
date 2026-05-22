@@ -45,3 +45,155 @@ Watching for file changes with StatReloader
 [22/May/2026 11:59:25,223] - Broken pipe from ('127.0.0.1', 50943)
 [22/May/2026 12:00:37] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 6855
 [22/May/2026 12:49:55] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 6885
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\views.py changed, reloading.
+Watching for file changes with StatReloader
+[22/May/2026 13:06:55] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 7562
+[22/May/2026 13:07:20] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 7578
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\views.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\__init__.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+[22/May/2026 13:18:19] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 12015
+D:\krish_trafo\multiWdg_backend\api\services\_windingServiceSupport.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\_windingServiceSupport.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\outerWindingService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\fineWindingService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\corseWindingService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+[22/May/2026 13:31:03] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 14027
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\_windingServiceSupport.py changed, reloading.
+Watching for file changes with StatReloader
+[22/May/2026 13:46:35] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 14354
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+[22/May/2026 14:13:34] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 15426
+[22/May/2026 14:13:37] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 15426
+D:\krish_trafo\multiWdg_backend\api\models\coilDimensions.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+[22/May/2026 14:21:29] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 15696
+D:\krish_trafo\multiWdg_backend\api\services\_windingServiceSupport.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\_windingServiceSupport.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\outerWindingService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\fineWindingService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\corseWindingService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\_windingServiceSupport.py changed, reloading.
+Watching for file changes with StatReloader
+[22/May/2026 21:49:22] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 20367
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+[22/May/2026 21:56:39] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 20367
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+[22/May/2026 22:01:00] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 21763
+[22/May/2026 22:02:34] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 21715
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+[22/May/2026 22:10:39] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 19192
+D:\krish_trafo\multiWdg_backend\api\services\_windingServiceSupport.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\outerWindingService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\fineWindingService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\corseWindingService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+[22/May/2026 22:33:59] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 19427
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+[22/May/2026 22:37:13] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 19540
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+[22/May/2026 23:00:34] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 20123
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+[22/May/2026 23:04:32] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 20304
+[22/May/2026 23:07:07] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 13819
+D:\krish_trafo\multiWdg_backend\api\services\hvWindingService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\hvWindingService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\lvWindingService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\lvWindingService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\lvWindingService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\lvWindingService.py changed, reloading.
+Watching for file changes with StatReloader

@@ -1,0 +1,15 @@
+from api.services._windingServiceSupport import build_hv_section_results
+
+
+def calculate_corse_windings(multi_winding, hv_source, seed_dimensions, allocated_turns, allocated_voltage):
+    return build_hv_section_results(
+        section_name="corse",
+        winding_type=getattr(multi_winding, "corseWindingType", "HELICAL"),
+        winding=getattr(multi_winding, "corseWindings", None),
+        hv_source=hv_source,
+        material=(getattr(multi_winding, "corseConductorMaterial", None) or getattr(multi_winding, "hvConductorMaterial", "COPPER")),
+        allocated_turns=allocated_turns,
+        allocated_voltage=allocated_voltage,
+        seed_dimensions=seed_dimensions,
+        dry_type=bool(getattr(multi_winding, "dryType", False)),
+    )

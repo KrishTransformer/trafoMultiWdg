@@ -20,6 +20,7 @@ from api.services.windingFormulae import (
     get_duct_size,
     get_end_clearance,
     get_gradient_limit,
+    get_gap_between_coils,
     get_height,
     get_height_insulated,
     get_hv_gradient,
@@ -32,6 +33,7 @@ from api.services.windingFormulae import (
     get_load_loss,
     get_lmt,
     get_lv_hv_gap,
+    get_no_of_coils,
     get_od,
     get_number_of_conductors,
     get_procurement_weight,
@@ -42,12 +44,14 @@ from api.services.windingFormulae import (
     get_revised_conductor_cross_section,
     get_round_cond_dia,
     get_stray_loss,
+    get_stray_loss_for_x_over,
     get_tank_loss,
     get_tap_currents,
     get_tap_voltages,
     get_turns_at_tap,
     get_turns_per_phase,
     get_winding_length,
+    get_winding_length_per_coil,
     get_wire_length,
     get_x_sec_per_conductor,
     hv_step_voltage,
@@ -77,6 +81,39 @@ def _trans_cost_type(multi_winding):
 
 def _hv_material(multi_winding):
     return (multi_winding.hvConductorMaterial or COPPER).upper()
+
+
+def _adjust_helical_hv_layers(hv_turns_at_highest, turns_per_layer):
+    adjusted_turns_per_layer = max(1, int(math.floor(turns_per_layer)))
+    number_of_layers_rough = hv_turns_at_highest / adjusted_turns_per_layer
+
+    # Match the Java service: reduce T/L until the last layer exceeds 50%.
+    while adjusted_turns_per_layer > 1 and (number_of_layers_rough % 1) <= 0.5:
+        adjusted_turns_per_layer -= 1
+        number_of_layers_rough = hv_turns_at_highest / adjusted_turns_per_layer
+        if (number_of_layers_rough % 1) > 0.5:
+            break
+
+    return adjusted_turns_per_layer, two_digit_decimal(number_of_layers_rough)
+
+
+def _two_digit_decimal_part(value):
+    return abs(value - int(value))
+
+
+def _half_up(value):
+    return int(math.ceil(value)) if _two_digit_decimal_part(value) >= 0.5 else int(math.floor(value))
+
+
+def _adjust_xover_hv_layers(hv_turns_per_coil, turns_per_layer):
+    adjusted_turns_per_layer = max(1, int(math.floor(turns_per_layer)))
+    number_of_layers_rough = hv_turns_per_coil / adjusted_turns_per_layer
+
+    while adjusted_turns_per_layer > 1 and _two_digit_decimal_part(number_of_layers_rough) < 0.5:
+        adjusted_turns_per_layer -= 1
+        number_of_layers_rough = hv_turns_per_coil / adjusted_turns_per_layer
+
+    return adjusted_turns_per_layer, int(math.ceil(number_of_layers_rough))
 
 
 def calculate_hv_windings(multi_winding, lv_results):
@@ -165,9 +202,30 @@ def calculate_hv_windings(multi_winding, lv_results):
 
     breadth_insulated = get_height_insulated(breadth, conductor_insulation)
     height_insulated = get_height_insulated(height, conductor_insulation)
+    winding_type = str(getattr(multi_winding, "hvWindingType", "HELICAL") or "HELICAL").upper()
     transposition = 20 if radial_parallel > 1 else 0
-    turns_per_layer = max(1, int(math.floor((winding_length - transposition) / max(breadth_insulated * axial_parallel, 0.1))))
-    number_of_layers = two_digit_decimal(hv_turns_at_highest / turns_per_layer)
+    hv_no_of_coils = 0
+    hv_gap_bw_coil = 0
+    hv_wdg_length_per_coil = 0
+
+    if winding_type == "XOVER":
+        hv_no_of_coils = get_no_of_coils(multi_winding.highVoltage, None)
+        hv_turns_per_coil = _half_up(hv_turns_at_highest / max(hv_no_of_coils, 1))
+        hv_turns_at_highest = hv_turns_per_coil * hv_no_of_coils
+        hv_gap_bw_coil = get_gap_between_coils(multi_winding.kVA, multi_winding.highVoltage, dry_type)
+        hv_wdg_length_per_coil = get_winding_length_per_coil(winding_length, hv_gap_bw_coil, hv_no_of_coils)
+        duct_thickness = get_duct_size(multi_winding.kVA, hv_wdg_length_per_coil, winding.ductSize, dry_type)
+        turns_per_layer = max(1, int(math.floor(hv_wdg_length_per_coil / max(breadth_insulated * axial_parallel, 0.1))) - 1)
+        turns_per_layer, number_of_layers = _adjust_xover_hv_layers(hv_turns_per_coil, turns_per_layer)
+        hv_wdg_length_per_coil = next_integer(breadth_insulated * axial_parallel * (turns_per_layer + 1))
+        hv_gap_bw_coil = int(math.floor((winding_length - (hv_wdg_length_per_coil * hv_no_of_coils)) / max(hv_no_of_coils, 1)))
+        winding_length = (hv_wdg_length_per_coil * hv_no_of_coils) + (hv_gap_bw_coil * (hv_no_of_coils - 1))
+        end_clearance = max(0, lv_results["windowHeight"] - winding_length)
+    else:
+        turns_per_layer = max(1, int(math.floor((winding_length - transposition) / max(breadth_insulated * axial_parallel, 0.1))))
+        turns_per_layer, number_of_layers = _adjust_helical_hv_layers(hv_turns_at_highest, turns_per_layer)
+        winding_length = next_integer((turns_per_layer + 1) * (breadth_insulated * axial_parallel))
+        end_clearance = max(0, lv_results["windowHeight"] - winding_length - transposition)
     revised_curr_den_normal = three_digit_decimal(hv_current_per_phase / (revised_cond_cross_section * no_of_conductors))
     revised_curr_den_lowest = three_digit_decimal(hv_current_at_lowest / (revised_cond_cross_section * no_of_conductors))
     total_cond_cross_section = get_actual_conductor_x_sec(revised_cond_cross_section, no_of_conductors)
@@ -180,6 +238,8 @@ def calculate_hv_windings(multi_winding, lv_results):
         dry_type,
     )
     no_of_ducts = max(0, winding.ducts or 0)
+    if no_of_ducts > number_of_layers - 1:
+        no_of_ducts = max(0, int(number_of_layers) - 1)
     hv_id = get_id(lv_results["lvOd"], lv_results["lvHvGap"])
     radial_thickness = get_radial_thickness(
         height_insulated,
@@ -206,19 +266,34 @@ def calculate_hv_windings(multi_winding, lv_results):
         is_enamel,
     )
     procurement_weight = get_procurement_weight(insulated_weight, no_of_conductors)
-    stray_loss = get_stray_loss(
-        breadth,
-        breadth_insulated,
-        height,
-        turns_per_layer,
-        radial_parallel,
-        axial_parallel,
-        conductor_insulation,
-        material,
-        number_of_layers,
-        transposition,
-        is_round,
-    )
+    if winding_type == "XOVER":
+        stray_loss = get_stray_loss_for_x_over(
+            breadth,
+            height,
+            turns_per_layer,
+            hv_no_of_coils,
+            radial_parallel,
+            axial_parallel,
+            conductor_insulation,
+            material,
+            number_of_layers,
+            winding_length,
+            is_round,
+        )
+    else:
+        stray_loss = get_stray_loss(
+            breadth,
+            breadth_insulated,
+            height,
+            turns_per_layer,
+            radial_parallel,
+            axial_parallel,
+            conductor_insulation,
+            material,
+            number_of_layers,
+            transposition,
+            is_round,
+        )
     load_loss_normal = next_integer(get_load_loss(material, bare_weight, revised_curr_den_normal, stray_loss) * (hv_turns_per_phase / max(hv_turns_at_highest, 1)))
     load_loss_lowest = next_integer(get_load_loss(material, bare_weight, revised_curr_den_lowest, stray_loss) * (hv_turns_at_lowest / max(hv_turns_at_highest, 1)))
     gradient = get_hv_gradient(load_loss_lowest, (no_of_ducts * 2) + 2, winding_length, transposition, hv_lmt, dry_type)
@@ -280,6 +355,9 @@ def calculate_hv_windings(multi_winding, lv_results):
         "hvHeightInsulated": height_insulated,
         "hvTurnsPerLayer": turns_per_layer,
         "hvNumberOfLayers": number_of_layers,
+        "hvNoOfCoils": hv_no_of_coils,
+        "hvGapBwCoil": hv_gap_bw_coil,
+        "hvWdgLengthPerCoil": hv_wdg_length_per_coil,
         "hvRevisedCondCrossSection": revised_cond_cross_section,
         "hvTotalCondCrossSection": total_cond_cross_section,
         "hvInterLayerInsulation": inter_layer_insulation,
