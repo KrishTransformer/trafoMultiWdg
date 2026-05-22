@@ -43,3 +43,5 @@ D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloadin
 Watching for file changes with StatReloader
 [22/May/2026 11:59:25] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 6844
 [22/May/2026 11:59:25,223] - Broken pipe from ('127.0.0.1', 50943)
+[22/May/2026 12:00:37] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 6855
+[22/May/2026 12:49:55] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 6885
