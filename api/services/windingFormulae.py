@@ -1908,70 +1908,9 @@ def build_winding_formula_context(multi_winding):
 
 
 def calculate_winding_formulae(multi_winding):
-    context = build_winding_formula_context(multi_winding)
-    vector_group = context["vectorGroup"]
-    kva = context["ratings"]["kVA"]
-    k_value = context["ratings"]["kValue"]
-    dry_type = getattr(multi_winding, "dryType", False)
-    lv_winding = context["windingModels"]["lv"]
-    hv_winding = context["windingModels"]["hv"]
+    from api.services.circWdgService import calculate_circ_wdg
 
-    lv_volts_per_phase = get_lv_volts_per_phase(context["ratings"]["lowVoltage"], vector_group)
-    hv_volts_per_phase = get_hv_volts_per_phase(context["ratings"]["highVoltage"], vector_group)
-    volts_per_turn = get_volts_per_turn(k_value, kva) if k_value and kva else None
-    lv_turns_per_phase = None
-    hv_turns_per_phase = None
-    lv_current_per_phase = None
-    hv_current_per_phase = None
-
-    if volts_per_turn and lv_volts_per_phase is not None:
-        lv_turns_per_phase = get_turns_per_phase(
-            lv_volts_per_phase,
-            volts_per_turn,
-            _get_winding_value(lv_winding, "turnsPerPhase"),
-            vector_group,
-            True,
-        )
-        lv_current_per_phase = get_current_per_phase(kva, lv_volts_per_phase)
-
-    if volts_per_turn and hv_volts_per_phase is not None:
-        hv_turns_per_phase = get_turns_per_phase(
-            hv_volts_per_phase,
-            volts_per_turn,
-            _get_winding_value(hv_winding, "turnsPerPhase"),
-            vector_group,
-            False,
-        )
-        hv_current_per_phase = get_current_per_phase(kva, hv_volts_per_phase)
-
-    return {
-        "inputs": context,
-        "results": {
-            "voltsPerTurn": volts_per_turn,
-            "lvVoltsPerPhase": lv_volts_per_phase,
-            "hvVoltsPerPhase": hv_volts_per_phase,
-            "lvTurnsPerPhase": lv_turns_per_phase,
-            "hvTurnsPerPhase": hv_turns_per_phase,
-            "lvCurrentPerPhase": lv_current_per_phase,
-            "hvCurrentPerPhase": hv_current_per_phase,
-            "lvEndClearance": get_lv_end_clearance(
-                kva,
-                vector_group,
-                _get_winding_value(lv_winding, "endClearances"),
-                dry_type,
-                context["ratings"]["lowVoltage"],
-                context["ratings"]["highVoltage"],
-            ),
-            "hvEndClearance": get_end_clearance(
-                kva,
-                context["ratings"]["highVoltage"],
-                vector_group,
-                _get_winding_value(hv_winding, "endClearances"),
-                dry_type,
-                False,
-            ),
-        },
-    }
+    return calculate_circ_wdg(multi_winding)
 
 
 # Backward-compatible aliases for older imports.

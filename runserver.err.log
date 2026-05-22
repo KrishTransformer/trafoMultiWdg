@@ -18,3 +18,28 @@ D:\krish_trafo\multiWdg_backend\api\services\windingFormulae.py changed, reloadi
 Watching for file changes with StatReloader
 D:\krish_trafo\multiWdg_backend\api\services\windingFormulae.py changed, reloading.
 Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\windingFormulae.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\__init__.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\windingFormulae.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\windingFormulae.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\views.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\__init__.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\views.py changed, reloading.
+Watching for file changes with StatReloader
+[22/May/2026 11:56:08] "GET / HTTP/1.1" 200 27
+[22/May/2026 11:56:08,780] - Broken pipe from ('127.0.0.1', 60731)
+[22/May/2026 11:56:08] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 6789
+[22/May/2026 11:56:08,838] - Broken pipe from ('127.0.0.1', 60732)
+[22/May/2026 11:56:41] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 6789
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\circWdgService.py changed, reloading.
+Watching for file changes with StatReloader
+[22/May/2026 11:59:25] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 6844
+[22/May/2026 11:59:25,223] - Broken pipe from ('127.0.0.1', 50943)

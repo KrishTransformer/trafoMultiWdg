@@ -5,8 +5,8 @@ from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from api.models import MultiWindings, RadialGaps, Windings
-from api.services.windingFormulae import calculate_winding_formulae
+from api.models import CoilDimensions, Core, MultiWindings, RadialGaps, Windings
+from api.services.circWdgService import calculate_circ_wdg
 
 
 def _build_model_instance(model_class, payload):
@@ -43,6 +43,8 @@ def _serialize_formula_payload(payload):
             for name, model in winding_models.items()
         },
         "radialGaps": _serialize_model(inputs.get("radialGaps")),
+        "core": _serialize_model(inputs.get("core")),
+        "coilDimensions": _serialize_model(inputs.get("coilDimensions")),
     }
 
     return {
@@ -62,6 +64,22 @@ def _build_multi_winding(payload):
     multi_winding.corseWindings = _build_model_instance(Windings, payload.get("corseWindings"))
     multi_winding.outerWindings = _build_model_instance(Windings, payload.get("outerWindings"))
     multi_winding.radialGaps = _build_model_instance(RadialGaps, payload.get("radialGaps"))
+    multi_winding.core = _build_model_instance(Core, payload.get("core"))
+    multi_winding.coilDimensions = _build_model_instance(CoilDimensions, payload.get("coilDimensions"))
+
+    for key in [
+        "dryType",
+        "dryTempClass",
+        "transCostType",
+        "lvWindingType",
+        "hvWindingType",
+        "limitEz",
+        "buildFactor",
+        "lvConductorFlag",
+        "hvConductorFlag",
+    ]:
+        if key in payload:
+            setattr(multi_winding, key, payload[key])
 
     return multi_winding
 
@@ -83,5 +101,5 @@ def multi_wdg_calculator(request):
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
 
-    formula_payload = calculate_winding_formulae(multi_winding)
+    formula_payload = calculate_circ_wdg(multi_winding)
     return JsonResponse(_serialize_formula_payload(formula_payload), status=200)
