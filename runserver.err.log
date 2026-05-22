@@ -1,0 +1,14 @@
+Watching for file changes with StatReloader
+[22/May/2026 10:28:30] "GET / HTTP/1.1" 200 27
+[22/May/2026 10:28:30] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 2144
+[22/May/2026 10:28:30,809] - Broken pipe from ('127.0.0.1', 50586)
+[22/May/2026 10:28:30,852] - Broken pipe from ('127.0.0.1', 50587)
+[22/May/2026 10:30:43] "GET / HTTP/1.1" 200 27
+[22/May/2026 10:31:07] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 632
+[22/May/2026 10:31:48] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 644
+[22/May/2026 10:32:23] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 2130
+D:\krish_trafo\multiWdg_backend\config\urls.py changed, reloading.
+Watching for file changes with StatReloader
+D:\krish_trafo\multiWdg_backend\api\services\windingFormulae.py changed, reloading.
+Watching for file changes with StatReloader
+[22/May/2026 10:36:52] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 2130
