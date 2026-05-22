@@ -197,3 +197,9 @@ D:\krish_trafo\multiWdg_backend\api\services\lvWindingService.py changed, reload
 Watching for file changes with StatReloader
 D:\krish_trafo\multiWdg_backend\api\services\lvWindingService.py changed, reloading.
 Watching for file changes with StatReloader
+[22/May/2026 23:31:14] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 14187
+[22/May/2026 23:31:30] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 14187
+D:\krish_trafo\multiWdg_backend\api\services\impedanceVbService.py changed, reloading.
+Watching for file changes with StatReloader
+[22/May/2026 23:31:59] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 14187
+[22/May/2026 23:39:51] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 14187
