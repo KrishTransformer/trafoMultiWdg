@@ -431,6 +431,7 @@ def _calculate_helical_rectangular(ctx, winding):
         breadth = winding.condBreadth
     else:
         breadth = one_digit_decimal(max(2.0, math.sqrt(cross_sec_per_conductor * 4)))
+        # breadth = get_bi(winding_length, turns_per_layer, axial_parallel, transposition, radial_parallel)
 
     if winding.condHeight is not None:
         height = winding.condHeight

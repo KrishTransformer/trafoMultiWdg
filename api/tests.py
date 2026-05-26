@@ -622,6 +622,32 @@ class MultiWdgCalculatorEndpointTests(TestCase):
             self.assertEqual(lv_results["lvTurnsPerLayer"], turns_per_layer)
             self.assertEqual(lv_results["lvNumberOfLayers"], number_of_layers)
 
+    def test_lv_helical_rectangular_branch_follows_java_auto_sizing(self):
+        multi_winding = MultiWindings(
+            kVA=2000,
+            kValue=0.45,
+            frequency=50,
+            fluxDensity=1.7,
+            vectorGroup="Dyn11",
+            lowVoltage=433,
+            highVoltage=11000,
+            lvCurrentDensity=2.5,
+            lvConductorMaterial="COPPER",
+        )
+        multi_winding.lvWindingType = "HELICAL"
+        multi_winding.lvWindings = Windings(endClearances=40, noOfLayers=2)
+
+        lv_results = calculate_lv_windings(multi_winding)
+
+        self.assertFalse(lv_results["lvIsConductorRound"])
+        self.assertEqual(lv_results["lvNumberOfLayers"], 2)
+        self.assertEqual(lv_results["lvTurnsPerLayer"], 6.5)
+        self.assertEqual(lv_results["lvBreadthInsulated"], 15.0)
+        self.assertEqual(lv_results["lvRadialParallelConductors"], 2)
+        self.assertEqual(lv_results["lvAxialParallelConductors"], 10)
+        self.assertEqual(lv_results["lvTransposition"], 30)
+        self.assertLess(lv_results["lvGradient"], lv_results["gradientLimit"])
+
     def test_hv_winding_service_uses_distinct_disc_branch(self):
         helical = MultiWindings(
             kVA=100,
