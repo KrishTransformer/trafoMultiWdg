@@ -38,6 +38,7 @@ from api.services.windingFormulae import (
     get_high_voltage,
     get_hv_hv_ins,
     get_k_value,
+    # get_kw55_for_multiple_windings,
     get_limit_ez,
     get_loss_at_100_percent,
     get_loss_at_50_percent,
@@ -1056,6 +1057,29 @@ def _build_phase_voltage_division(section_allocations):
     }
 
 
+# def _build_multi_winding_kw55(load_losses, gradients, core_loss, tank_loss):
+#     return get_kw55_for_multiple_windings(core_loss, load_losses, tank_loss, gradients)
+
+
+def _collect_multi_winding_thermal_inputs(
+    lv_results,
+    hv_winding_model,
+    corse_winding_model,
+    fine_winding_model,
+    outer_winding_model,
+):
+    load_losses = [safe_float(lv_results.get("lvLoadLoss"), 0.0)]
+    gradients = [safe_float(lv_results.get("lvGradient"), 0.0)]
+
+    for winding_model in (hv_winding_model, corse_winding_model, fine_winding_model, outer_winding_model):
+        if winding_model is None:
+            continue
+        load_losses.append(safe_float(getattr(winding_model, "loadLoss", None), 0.0))
+        gradients.append(safe_float(getattr(winding_model, "tempGradDegC", None), 0.0))
+
+    return load_losses, gradients
+
+
 def _with_named_volts_per_phase(payload, voltage_field_name, voltage_value):
     normalized_payload = dict(payload)
     normalized_payload["voltsPerPhase"] = voltage_value
@@ -1254,6 +1278,26 @@ def calculate_circ_wdg(multi_winding):
         "impedanceBreakdown": impedance_summary["breakdown"],
     }
 
+    # kW55 is temporarily disabled while we validate the remaining multi-winding flow.
+    # if multi_winding.windings == DEFAULT_WINDING_SELECTION:
+    #     kw55 = raw_hv_results.get("kW55")
+    # else:
+    #     winding_load_losses, winding_gradients = _collect_multi_winding_thermal_inputs(
+    #         lv_results,
+    #         hv_winding_model,
+    #         corse_winding_model,
+    #         fine_winding_model,
+    #         outer_winding_model,
+    #     )
+    #     kw55 = _build_multi_winding_kw55(
+    #         winding_load_losses,
+    #         winding_gradients,
+    #         recomputed_core_loss,
+    #         recomputed_tank_loss,
+    #     )
+    #     raw_hv_results["kW55"] = kw55
+    #     hv_results["kW55"] = kw55
+
     losses_at_50 = get_loss_at_50_percent(
         recomputed_core_loss,
         recomputed_tank_loss,
@@ -1284,6 +1328,8 @@ def calculate_circ_wdg(multi_winding):
         "hvVoltsPerPhase",
         hv_results_for_calc["hvVoltsPerPhase"] if "hvVoltsPerPhase" in hv_results_for_calc else raw_hv_results["hvVoltsPerPhase"],
     )
+    # hv_winding_response["kW55"] = kw55
+    # common["kW55"] = kw55
 
     return {
         "selectedCode": WINDING_SELECTION_CODES[multi_winding.windings],
@@ -1307,6 +1353,7 @@ def calculate_circ_wdg(multi_winding):
             "fineWinding": fine_results,
             "outerWinding": outer_results,
             "windingTypes": _build_winding_type_payload(multi_winding),
+            # "kW55": kw55,
             "common": common,
             "core": {
                 "coreDia": core.coreDia,

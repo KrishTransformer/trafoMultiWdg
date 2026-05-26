@@ -1170,6 +1170,16 @@ def get_kw55(core_loss, lv_load_loss, hv_load_loss, tank_loss, lv_gradient, hv_g
     return next_5or0_integer(kw55_factor * total_loss)
 
 
+def get_kw55_for_multiple_windings(core_loss, winding_load_losses, tank_loss, winding_gradients):
+    gradients = [max(0.0, float(gradient)) for gradient in winding_gradients if gradient is not None]
+    total_gradient = sum(gradients)
+    gradient55 = 14.5 if total_gradient < 14.5 else total_gradient
+    new_top_oil_temperature = 98 - 32 - (1.1 * gradient55)
+    kw55_factor = math.pow(55 / new_top_oil_temperature, (1 / 0.7))
+    total_loss = core_loss + (1.1 * (sum(winding_load_losses) + tank_loss))
+    return next_5or0_integer(kw55_factor * total_loss)
+
+
 def get_disc_duct_size(line_voltage, is_inner_wdg, vector_group, disc_duct_from_user=None):
     if line_voltage <= 33000:
         disc_duct_size = 3 if is_inner_wdg else 3.5

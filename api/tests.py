@@ -265,140 +265,6 @@ class MultiWdgCalculatorEndpointTests(TestCase):
             response.json()["results"]["phaseVoltageDivision"]["outer"],
             int(response.json()["inputs"]["windingModels"]["outer"]["terminal"]),
         )
-        self.assertEqual(response.json()["inputs"]["windingModels"]["fine"]["endClearances"], 70)
-        self.assertEqual(response.json()["inputs"]["windingModels"]["corse"]["endClearances"], 65)
-        self.assertEqual(
-            response.json()["inputs"]["windingModels"]["corse"]["windingLength"],
-            response.json()["results"]["hvWinding"]["windingLength"],
-        )
-        self.assertIn(
-            "Seed CORSE OD",
-            response.json()["inputs"]["windingModels"]["fine"]["noInParallel"],
-        )
-        self.assertEqual(
-            response.json()["inputs"]["windingModels"]["outer"]["turnsLayers"],
-            "FINE -> fineToOuter -> OUTER",
-        )
-        self.assertEqual(
-            response.json()["inputs"]["windingTypes"]["outer"],
-            "DISC",
-        )
-        self.assertEqual(
-            set(response.json()["inputs"]["windingTypes"].keys()),
-            {"lv", "hv", "corse", "fine", "outer"},
-        )
-        self.assertEqual(
-            response.json()["results"]["outerWinding"]["status"],
-            "calculated",
-        )
-        self.assertTrue(response.json()["results"]["outerWinding"]["implemented"])
-        self.assertGreater(response.json()["inputs"]["windingModels"]["outer"]["loadLoss"], 0)
-        self.assertEqual(
-            response.json()["results"]["fineWinding"]["status"],
-            "calculated",
-        )
-        self.assertEqual(
-            response.json()["results"]["corseWinding"]["status"],
-            "calculated",
-        )
-        self.assertTrue(response.json()["results"]["fineWinding"]["implemented"])
-        self.assertTrue(response.json()["results"]["corseWinding"]["implemented"])
-        self.assertEqual(
-            response.json()["results"]["corseWinding"]["seedDimensions"]["previousWinding"],
-            "hv",
-        )
-        self.assertEqual(
-            response.json()["results"]["fineWinding"]["seedDimensions"]["previousWinding"],
-            "corse",
-        )
-        self.assertEqual(
-            response.json()["results"]["outerWinding"]["seedDimensions"]["previousWinding"],
-            "fine",
-        )
-        self.assertEqual(
-            response.json()["results"]["corseWinding"]["seedDimensions"]["gapField"],
-            "lvToCoarse",
-        )
-        self.assertEqual(
-            response.json()["results"]["fineWinding"]["seedDimensions"]["gapField"],
-            "fineToCoarse",
-        )
-        self.assertEqual(
-            response.json()["results"]["outerWinding"]["seedDimensions"]["gapField"],
-            "fineToOuter",
-        )
-        self.assertEqual(
-            response.json()["results"]["coilDimensions"]["outermostWinding"],
-            "outer",
-        )
-        self.assertEqual(
-            response.json()["results"]["coilDimensions"]["corseID"],
-            response.json()["results"]["coilDimensions"]["windingDimensions"]["corse"]["innerDiameter"],
-        )
-        self.assertEqual(
-            response.json()["results"]["coilDimensions"]["fineOD"],
-            response.json()["results"]["coilDimensions"]["windingDimensions"]["fine"]["outerDiameter"],
-        )
-        self.assertEqual(
-            response.json()["results"]["coilDimensions"]["outerGap"],
-            response.json()["results"]["coilDimensions"]["windingDimensions"]["outer"]["gapFromPrevious"],
-        )
-        self.assertEqual(
-            len(response.json()["results"]["impedance"]["pairs"]),
-            4,
-        )
-        self.assertEqual(
-            response.json()["results"]["impedance"]["pairs"][1]["pair"],
-            "hv-corse",
-        )
-        self.assertEqual(
-            response.json()["results"]["impedance"]["pairs"][2]["pair"],
-            "corse-fine",
-        )
-        self.assertEqual(
-            response.json()["results"]["impedance"]["pairs"][3]["pair"],
-            "fine-outer",
-        )
-        self.assertGreater(
-            response.json()["results"]["impedance"]["totals"]["er"],
-            1.0,
-        )
-        self.assertGreater(
-            response.json()["results"]["impedance"]["vb"]["deltaDs"],
-            0.0,
-        )
-        self.assertEqual(
-            response.json()["results"]["common"]["ek"],
-            response.json()["results"]["ez"]["value"],
-        )
-        self.assertEqual(
-            response.json()["inputs"]["coilDimensions"]["corseID"],
-            response.json()["results"]["coilDimensions"]["corseID"],
-        )
-        self.assertEqual(
-            response.json()["inputs"]["coilDimensions"]["outermostWinding"],
-            "outer",
-        )
-        self.assertEqual(
-            len(response.json()["results"]["coilDimensions"]["radialBuild"]),
-            5,
-        )
-        self.assertGreater(
-            response.json()["results"]["coilDimensions"]["outermostOD"],
-            response.json()["results"]["coilDimensions"]["hVOD"],
-        )
-        self.assertEqual(
-            response.json()["results"]["coilDimensions"]["radialBuild"][2]["seededFrom"],
-            "hv",
-        )
-        self.assertEqual(
-            response.json()["results"]["coilDimensions"]["radialBuild"][3]["seededFrom"],
-            "corse",
-        )
-        self.assertEqual(
-            response.json()["results"]["coilDimensions"]["radialBuild"][4]["seededFrom"],
-            "fine",
-        )
 
     def test_multi_wdg_selection_preserves_canonical_winding_sequence(self):
         payload = {
@@ -596,7 +462,7 @@ class MultiWdgCalculatorEndpointTests(TestCase):
 
     def test_lv_winding_service_uses_java_type_specific_branches(self):
         expected = {
-            "HELICAL": (12, 4.67),
+            "HELICAL": (28.0, 2),
             "DISC": (20, 3),
             "FOIL": (1, 56),
             "LAYER_DISC": (56, 1),

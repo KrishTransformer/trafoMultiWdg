@@ -90,6 +90,13 @@ def _hv_material(multi_winding):
     return (multi_winding.hvConductorMaterial or COPPER).upper()
 
 
+def _is_multi_winding_design(multi_winding):
+    return any(
+        getattr(multi_winding, winding_name, None) is not None
+        for winding_name in ("corseWindings", "fineWindings", "outerWindings")
+    )
+
+
 def _adjust_helical_hv_layers(hv_turns_at_highest, turns_per_layer):
     adjusted_turns_per_layer = max(1, int(math.floor(turns_per_layer)))
     number_of_layers_rough = hv_turns_at_highest / adjusted_turns_per_layer
@@ -382,7 +389,10 @@ def calculate_hv_windings(multi_winding, lv_results):
     core_loss = get_core_loss(core_weight, getattr(multi_winding, "buildFactor", 1.25), specific_loss)
     tank_loss = get_tank_loss(multi_winding.kVA, lv_results["lvCurrentPerPhase"], multi_winding.lowVoltage, None, dry_type)
     total_load_loss = next_integer(lv_results["lvLoadLoss"] + load_loss_normal + tank_loss)
-    kw55 = get_kw55(core_loss, lv_results["lvLoadLoss"], load_loss_lowest, tank_loss, lv_results["lvGradient"], gradient)
+    # kW55 is temporarily disabled while we validate the remaining multi-winding flow.
+    # kw55 = None
+    # if not _is_multi_winding_design(multi_winding):
+    #     kw55 = get_kw55(core_loss, lv_results["lvLoadLoss"], load_loss_lowest, tank_loss, lv_results["lvGradient"], gradient)
     gradient_limit = get_gradient_limit(dry_type, dry_temp_class)
     active_part_length = (2 * center_distance) + hv_od
     active_part_height = int((2 * lv_results["coreDiameter"]) + lv_results["windowHeight"])
@@ -450,7 +460,7 @@ def calculate_hv_windings(multi_winding, lv_results):
         "coreLoss": core_loss,
         "tankLoss": tank_loss,
         "totalLoadLoss": total_load_loss,
-        "kW55": kw55,
+        # "kW55": kw55,
         "gradientLimit": gradient_limit,
         "activePartSize": active_part_size,
         "hvDiscDuctsSize": disc_duct_size or get_disc_duct_size(multi_winding.highVoltage, False, vector_group, None),

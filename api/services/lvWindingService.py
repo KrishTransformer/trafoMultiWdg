@@ -32,6 +32,7 @@ from api.services.windingFormulae import (
     get_lv_end_clearance,
     get_lv_gradient,
     get_lv_hv_gap,
+    get_lv_turns_per_layer,
     get_lv_volts_per_phase,
     get_net_area,
     get_number_of_conductors,
@@ -131,6 +132,21 @@ def _coerce_ducts(no_of_ducts, number_of_layers):
     if no_of_ducts > int(number_of_layers) - 1:
         return max(0, int(number_of_layers) - 1)
     return max(0, no_of_ducts)
+
+
+def _resolve_helical_layers(ctx, winding):
+    if winding.noOfLayers and winding.noOfLayers > 0:
+        number_of_layers = winding.noOfLayers
+        turns_per_layer = get_lv_turns_per_layer(ctx["lvTurnsPerPhase"], number_of_layers)
+    elif winding.turnsPerLayer and winding.turnsPerLayer > 0:
+        turns_per_layer = winding.turnsPerLayer
+        number_of_layers = two_digit_decimal(ctx["lvTurnsPerPhase"] / turns_per_layer)
+    else:
+        # Mirror the Java circular-core flow: helical sizing starts from
+        # a seeded layer count before conductor dimensions are derived.
+        number_of_layers = 2
+        turns_per_layer = get_lv_turns_per_layer(ctx["lvTurnsPerPhase"], number_of_layers)
+    return number_of_layers, turns_per_layer
 
 
 def _build_base_context(multi_winding, winding):
@@ -294,6 +310,7 @@ def _apply_gradient_loop_helical(ctx, values, user_ducts):
 
 
 def _calculate_helical_round(ctx, winding):
+    number_of_layers, turns_per_layer = _resolve_helical_layers(ctx, winding)
     conductor_cross_section = get_conductor_cross_section(ctx["lvCurrentPerPhase"], ctx["currentDensity"])
     number_of_conductors = get_number_of_conductors(conductor_cross_section, ctx["material"])
     cross_sec_per_conductor = get_x_sec_per_conductor(conductor_cross_section, number_of_conductors)
@@ -310,8 +327,8 @@ def _calculate_helical_round(ctx, winding):
     )
     breadth_insulated = get_height_insulated(breadth, conductor_insulation)
     height_insulated = get_height_insulated(height, conductor_insulation)
-    turns_per_layer = math.floor(ctx["lvWindingLength"] / max(breadth_insulated, 0.1))
-    turns_per_layer, number_of_layers = _round_branch_layers(ctx["lvTurnsPerPhase"], turns_per_layer)
+    calculated_turns_per_layer = math.floor(ctx["lvWindingLength"] / max(breadth_insulated, 0.1))
+    turns_per_layer, number_of_layers = _round_branch_layers(ctx["lvTurnsPerPhase"], calculated_turns_per_layer)
     winding_length = next_integer(breadth_insulated * (turns_per_layer + 1))
     end_clearance = ctx["windowHeight"] - winding_length
     revised_cond_cross_section = two_digit_decimal(math.pi * math.pow(breadth, 2) / 4)
@@ -413,6 +430,7 @@ def _calculate_helical_round(ctx, winding):
 
 
 def _calculate_helical_rectangular(ctx, winding):
+    number_of_layers, turns_per_layer = _resolve_helical_layers(ctx, winding)
     conductor_cross_section = get_conductor_cross_section(ctx["lvCurrentPerPhase"], ctx["currentDensity"])
     number_of_conductors = get_number_of_conductors(conductor_cross_section, ctx["material"])
     conductor_flag = ctx["lvConductorFlag"]
@@ -433,21 +451,6 @@ def _calculate_helical_rectangular(ctx, winding):
         winding.condInsulation,
         ctx["dryType"],
     )
-
-    if winding.noOfLayers and winding.noOfLayers > 0:
-        number_of_layers = winding.noOfLayers
-        turns_per_layer = ctx["lvTurnsPerPhase"] / number_of_layers
-    elif winding.turnsPerLayer and winding.turnsPerLayer > 0:
-        turns_per_layer = winding.turnsPerLayer
-        number_of_layers = two_digit_decimal(ctx["lvTurnsPerPhase"] / turns_per_layer)
-    else:
-        initial_breadth = one_digit_decimal(max(2.0, math.sqrt(cross_sec_per_conductor * 4)))
-        initial_breadth_insulated = get_height_insulated(initial_breadth, conductor_insulation)
-        turns_per_layer = max(
-            1,
-            int(math.floor((ctx["lvWindingLength"] - transposition) / max((initial_breadth_insulated * axial_parallel), 0.1))),
-        )
-        number_of_layers = two_digit_decimal(ctx["lvTurnsPerPhase"] / turns_per_layer)
 
     breadth_insulated = get_bi(winding_length, turns_per_layer, axial_parallel, transposition, radial_parallel)
 
