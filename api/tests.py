@@ -423,6 +423,92 @@ class MultiWdgCalculatorEndpointTests(TestCase):
             ["lv", "hv", "fine", "outer"],
         )
 
+    def test_multi_wdg_hv_main_layers_follow_calculated_turns(self):
+        payload = {
+            "windingSelection": "3 Wdg (LV, HV-Main and Outer)",
+            "kVA": 100,
+            "kValue": 0.45,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 433,
+            "highVoltage": 11000,
+            "hvWindingType": "Helical",
+            "outerWindingType": "Helical",
+            "outerWindings": {
+                "turnsPerPhase": 500,
+                "turnsPerLayer": 10,
+                "condHeight": 4,
+                "condInsulation": 0.5,
+                "interLayerInsulation": 1,
+                "ducts": 1,
+                "ductSize": 6,
+            },
+            "radialGaps": {
+                "coreToLv": 5,
+                "LvtoHV": 10,
+                "lvToOuter": 10,
+            },
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        hv_model = response.json()["inputs"]["windingModels"]["hv"]
+        hv_results = response.json()["results"]["hvWinding"]
+        self.assertEqual(hv_model["turnsPerPhase"], 2465.0)
+        self.assertEqual(hv_model["turnsPerLayer"], 197.0)
+        self.assertEqual(hv_model["noOfLayers"], 12.51)
+        self.assertNotEqual(hv_model["noOfLayers"], hv_model["turnsPerPhase"])
+        self.assertEqual(hv_results["turnsPerLayer"], 197.0)
+        self.assertEqual(hv_results["noOfLayers"], 12.51)
+        self.assertEqual(hv_results["endClearance"], 56.0)
+        self.assertEqual(hv_results["windingLength"], 238.0)
+
+    def test_multi_wdg_extra_windings_layers_follow_allocated_turns(self):
+        payload = {
+            "windingSelection": "5 Wdg (LV, HV-Main, Corse, Fine and Outer)",
+            "kVA": 100,
+            "kValue": 0.45,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 433,
+            "highVoltage": 11000,
+            "tapStepsPercentage": 2.5,
+            "tapStepPositive": 2,
+            "tapStepNegative": 2,
+            "hvWindingType": "Helical",
+            "corseWindingType": "Helical",
+            "fineWindingType": "Helical",
+            "outerWindingType": "Helical",
+            "radialGaps": {
+                "coreToLv": 5,
+                "LvtoHV": 10,
+                "lvToCoarse": 8,
+                "fineToCoarse": 6,
+                "fineToOuter": 10,
+            },
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        for winding_name in ("corse", "fine", "outer"):
+            model = response.json()["inputs"]["windingModels"][winding_name]
+            result = response.json()["results"][f"{winding_name}Winding"]
+            self.assertEqual(model["turnsPerLayer"], 203.0)
+            self.assertEqual(model["noOfLayers"], 1.0)
+            self.assertNotEqual(model["noOfLayers"], model["turnsPerPhase"])
+            self.assertEqual(model["endClearances"], 49.0)
+            self.assertEqual(result["turnsPerLayer"], 203.0)
+            self.assertEqual(result["noOfLayers"], 1.0)
+            self.assertEqual(result["endClearance"], 49.0)
+
     def test_multi_wdg_calculator_rejects_invalid_winding_selection(self):
         payload = {
             "windingSelection": "7 Wdg",
@@ -536,6 +622,43 @@ class MultiWdgCalculatorEndpointTests(TestCase):
             self.assertEqual(lv_results["lvTurnsPerLayer"], turns_per_layer)
             self.assertEqual(lv_results["lvNumberOfLayers"], number_of_layers)
 
+    def test_hv_winding_service_uses_distinct_disc_branch(self):
+        helical = MultiWindings(
+            kVA=100,
+            kValue=0.45,
+            frequency=50,
+            fluxDensity=1.7,
+            vectorGroup="Dyn11",
+            lowVoltage=433,
+            highVoltage=11000,
+            hvCurrentDensity=2.2,
+            hvConductorMaterial="COPPER",
+        )
+        disc = MultiWindings(
+            kVA=100,
+            kValue=0.45,
+            frequency=50,
+            fluxDensity=1.7,
+            vectorGroup="Dyn11",
+            lowVoltage=433,
+            highVoltage=11000,
+            hvCurrentDensity=2.2,
+            hvConductorMaterial="COPPER",
+        )
+        helical.hvWindingType = "HELICAL"
+        disc.hvWindingType = "DISC"
+
+        lv_helical = calculate_lv_windings(helical)
+        lv_disc = calculate_lv_windings(disc)
+        helical_results = calculate_hv_windings(helical, lv_helical)
+        disc_results = calculate_hv_windings(disc, lv_disc)
+
+        self.assertFalse(disc_results["hvBreadth"] < 5 and disc_results["hvHeight"] > 1.7)
+        self.assertNotEqual(helical_results["hvTurnsPerLayer"], disc_results["hvTurnsPerLayer"])
+        self.assertNotEqual(helical_results["hvNumberOfLayers"], disc_results["hvNumberOfLayers"])
+        self.assertNotEqual(helical_results["hvWindingLength"], disc_results["hvWindingLength"])
+        self.assertNotEqual(helical_results["%hvStrayLoss"], disc_results["%hvStrayLoss"])
+
     def test_circ_service_returns_linked_sections(self):
         multi_winding = MultiWindings(
             kVA=100,
@@ -605,3 +728,58 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         self.assertTrue(corse_results["implemented"])
         self.assertEqual(corse_results["windingType"], "HELICAL")
         self.assertEqual(corse_results["voltsPerPhase"], 540)
+
+    def test_outer_winding_service_uses_distinct_disc_branch(self):
+        multi_winding = MultiWindings(
+            kVA=100,
+            kValue=0.45,
+            vectorGroup="Dyn11",
+            lowVoltage=433,
+            highVoltage=11000,
+            windings="5 Wdg (LV, HV-Main, Corse, Fine and Outer)",
+        )
+        lv_results = calculate_lv_windings(multi_winding)
+        hv_results = calculate_hv_windings(multi_winding, lv_results)
+        outer_seed = {
+            "previousWinding": "fine",
+            "previousOuterDiameter": 320.0,
+            "previousRadialThickness": 12.0,
+            "previousWindingLength": 420.0,
+            "gapField": "fineToOuter",
+            "gapToPrevious": 10.0,
+        }
+
+        multi_winding.outerWindingType = "HELICAL"
+        multi_winding.outerWindings = Windings(endClearances=60, ducts=0, ductSize=0, isEnamel=False)
+        helical_results = calculate_outer_windings(multi_winding, hv_results, outer_seed, 60, 270)
+        multi_winding.outerWindingType = "DISC"
+        multi_winding.outerWindings = Windings(endClearances=60, ducts=0, ductSize=0, isEnamel=False)
+        disc_results = calculate_outer_windings(multi_winding, hv_results, outer_seed, 60, 270)
+
+        self.assertFalse(disc_results["breadth"] < 5 and disc_results["height"] > 1.7)
+        self.assertNotEqual(helical_results["turnsPerLayer"], disc_results["turnsPerLayer"])
+        self.assertNotEqual(helical_results["windingLength"], disc_results["windingLength"])
+        self.assertNotEqual(helical_results["strayLoss"], disc_results["strayLoss"])
+
+    def test_api_formats_non_round_conductor_sizes_as_l_x_b(self):
+        payload = {
+            "windings": "LV-HV",
+            "kVA": 100,
+            "kValue": 0.45,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 433,
+            "highVoltage": 11000,
+            "hvWindingType": "DISC",
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        hv_model = response.json()["inputs"]["windingModels"]["hv"]
+        self.assertFalse(hv_model["isConductorRound"])
+        self.assertIn(" L X ", hv_model["conductorSizes"])
+        self.assertTrue(hv_model["conductorSizes"].endswith(" B"))

@@ -1,6 +1,7 @@
 import math
 
 from api.models import Windings
+from api.services._windingServiceSupport import _select_disc_conductor_geometry
 from api.services.windingFormulae import (
     CLASS_B,
     ECONOMIC,
@@ -17,6 +18,8 @@ from api.services.windingFormulae import (
     get_current_density,
     get_current_per_phase,
     get_disc_duct_size,
+    get_disc_radial_thickness,
+    get_disc_winding_length,
     get_duct_size,
     get_end_clearance,
     get_gradient_limit,
@@ -44,6 +47,7 @@ from api.services.windingFormulae import (
     get_revised_conductor_cross_section,
     get_round_cond_dia,
     get_stray_loss,
+    get_stray_loss_for_disc,
     get_stray_loss_for_x_over,
     get_tank_loss,
     get_tap_currents,
@@ -61,6 +65,9 @@ from api.services.windingFormulae import (
     three_digit_decimal,
     two_digit_decimal,
 )
+
+INSULATION_COMPRESSION = 0.93
+INSULATION_EXPANSION = 1.07
 
 
 def _safe_winding(winding):
@@ -114,6 +121,10 @@ def _adjust_xover_hv_layers(hv_turns_per_coil, turns_per_layer):
         number_of_layers_rough = hv_turns_per_coil / adjusted_turns_per_layer
 
     return adjusted_turns_per_layer, int(math.ceil(number_of_layers_rough))
+
+
+def _normalize_winding_type(winding_type):
+    return str(winding_type or "HELICAL").upper().replace("-", "_").replace(" ", "_")
 
 
 def calculate_hv_windings(multi_winding, lv_results):
@@ -202,11 +213,12 @@ def calculate_hv_windings(multi_winding, lv_results):
 
     breadth_insulated = get_height_insulated(breadth, conductor_insulation)
     height_insulated = get_height_insulated(height, conductor_insulation)
-    winding_type = str(getattr(multi_winding, "hvWindingType", "HELICAL") or "HELICAL").upper()
+    winding_type = _normalize_winding_type(getattr(multi_winding, "hvWindingType", "HELICAL"))
     transposition = 20 if radial_parallel > 1 else 0
     hv_no_of_coils = 0
     hv_gap_bw_coil = 0
     hv_wdg_length_per_coil = 0
+    disc_duct_size = 0
 
     if winding_type == "XOVER":
         hv_no_of_coils = get_no_of_coils(multi_winding.highVoltage, None)
@@ -221,6 +233,33 @@ def calculate_hv_windings(multi_winding, lv_results):
         hv_gap_bw_coil = int(math.floor((winding_length - (hv_wdg_length_per_coil * hv_no_of_coils)) / max(hv_no_of_coils, 1)))
         winding_length = (hv_wdg_length_per_coil * hv_no_of_coils) + (hv_gap_bw_coil * (hv_no_of_coils - 1))
         end_clearance = max(0, lv_results["windowHeight"] - winding_length)
+    elif winding_type == "DISC":
+        is_round = False
+        disc_duct_size = get_disc_duct_size(multi_winding.highVoltage, False, vector_group, None)
+        disc_geometry = _select_disc_conductor_geometry(
+            hv_turns_at_highest,
+            winding_length,
+            cross_sec_per_conductor,
+            conductor_insulation,
+            axial_parallel,
+            disc_duct_size,
+            winding.condBreadth,
+            winding.condHeight,
+        )
+        breadth = disc_geometry["breadth"]
+        height = disc_geometry["height"]
+        breadth_insulated = disc_geometry["breadthInsulated"]
+        height_insulated = get_height_insulated(height, conductor_insulation)
+        turns_per_layer = int(disc_geometry["noOfDiscs"])
+        number_of_layers = int(disc_geometry["turnsPerDisc"])
+        winding_length = get_disc_winding_length(
+            breadth,
+            conductor_insulation,
+            INSULATION_COMPRESSION,
+            turns_per_layer,
+            disc_duct_size,
+        )
+        end_clearance = max(0, int(math.floor(lv_results["windowHeight"] - (winding_length + lv_results["permaWoodRing"]))))
     else:
         turns_per_layer = max(1, int(math.floor((winding_length - transposition) / max(breadth_insulated * axial_parallel, 0.1))))
         turns_per_layer, number_of_layers = _adjust_helical_hv_layers(hv_turns_at_highest, turns_per_layer)
@@ -229,7 +268,7 @@ def calculate_hv_windings(multi_winding, lv_results):
     revised_curr_den_normal = three_digit_decimal(hv_current_per_phase / (revised_cond_cross_section * no_of_conductors))
     revised_curr_den_lowest = three_digit_decimal(hv_current_at_lowest / (revised_cond_cross_section * no_of_conductors))
     total_cond_cross_section = get_actual_conductor_x_sec(revised_cond_cross_section, no_of_conductors)
-    inter_layer_insulation = get_inter_layer_insulation(
+    inter_layer_insulation = 0 if winding_type == "DISC" else get_inter_layer_insulation(
         volts_per_turn,
         turns_per_layer,
         conductor_insulation,
@@ -241,14 +280,26 @@ def calculate_hv_windings(multi_winding, lv_results):
     if no_of_ducts > number_of_layers - 1:
         no_of_ducts = max(0, int(number_of_layers) - 1)
     hv_id = get_id(lv_results["lvOd"], lv_results["lvHvGap"])
-    radial_thickness = get_radial_thickness(
-        height_insulated,
-        radial_parallel,
-        number_of_layers,
-        inter_layer_insulation,
-        no_of_ducts,
-        duct_thickness,
-        False,
+    radial_thickness = (
+        get_disc_radial_thickness(
+            height,
+            radial_parallel,
+            conductor_insulation,
+            INSULATION_EXPANSION,
+            number_of_layers,
+            no_of_ducts,
+            duct_thickness,
+        )
+        if winding_type == "DISC"
+        else get_radial_thickness(
+            height_insulated,
+            radial_parallel,
+            number_of_layers,
+            inter_layer_insulation,
+            no_of_ducts,
+            duct_thickness,
+            False,
+        )
     )
     hv_od = get_od(hv_id, radial_thickness)
     hv_lmt = get_lmt(hv_id, hv_od)
@@ -279,6 +330,18 @@ def calculate_hv_windings(multi_winding, lv_results):
             number_of_layers,
             winding_length,
             is_round,
+        )
+    elif winding_type == "DISC":
+        stray_loss = get_stray_loss_for_disc(
+            breadth,
+            height,
+            turns_per_layer,
+            radial_parallel,
+            axial_parallel,
+            conductor_insulation,
+            material,
+            number_of_layers,
+            winding_length,
         )
     else:
         stray_loss = get_stray_loss(
@@ -390,5 +453,5 @@ def calculate_hv_windings(multi_winding, lv_results):
         "kW55": kw55,
         "gradientLimit": gradient_limit,
         "activePartSize": active_part_size,
-        "hvDiscDuctsSize": get_disc_duct_size(multi_winding.highVoltage, False, vector_group, None),
+        "hvDiscDuctsSize": disc_duct_size or get_disc_duct_size(multi_winding.highVoltage, False, vector_group, None),
     }

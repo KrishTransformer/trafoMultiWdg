@@ -416,6 +416,39 @@ def _apply_section_allocation_fallbacks(multi_winding, allocations, volts_per_tu
         allocation["voltsPerPhase"] = _vb_int(fallback_turns * volts_per_turn)
 
 
+def _seed_hv_main_winding(winding, hv_results):
+    hv_winding = winding if winding is not None else Windings()
+
+    if safe_float(getattr(hv_winding, "turnsPerLayer", None), 0.0) <= 0:
+        hv_winding.turnsPerLayer = safe_float(hv_results.get("hvTurnsPerLayer"), 0.0)
+    if safe_float(getattr(hv_winding, "endClearances", None), 0.0) <= 0:
+        hv_winding.endClearances = safe_float(hv_results.get("hvEndClearance"), 0.0)
+    if getattr(hv_winding, "ducts", None) is None:
+        hv_winding.ducts = int(round(safe_float(hv_results.get("hvNoOfDuct"), 0.0)))
+    if getattr(hv_winding, "ductSize", None) is None:
+        hv_winding.ductSize = int(round(safe_float(hv_results.get("hvDuctThickness"), 0.0)))
+    if getattr(hv_winding, "condInsulation", None) is None:
+        hv_winding.condInsulation = safe_float(hv_results.get("hvConductorInsulation"), 0.0)
+    if getattr(hv_winding, "interLayerInsulation", None) is None:
+        hv_winding.interLayerInsulation = safe_float(hv_results.get("hvInterLayerInsulation"), 0.0)
+    if getattr(hv_winding, "radialParallelCond", None) is None:
+        hv_winding.radialParallelCond = int(round(safe_float(hv_results.get("hvRadialParallelConductors"), 1.0)))
+    if getattr(hv_winding, "axialParallelCond", None) is None:
+        hv_winding.axialParallelCond = int(round(safe_float(hv_results.get("hvAxialParallelConductors"), 1.0)))
+    if getattr(hv_winding, "condBreadth", None) is None:
+        hv_winding.condBreadth = safe_float(hv_results.get("hvBreadth"), 0.0)
+    if getattr(hv_winding, "condHeight", None) is None:
+        hv_winding.condHeight = safe_float(hv_results.get("hvHeight"), 0.0)
+    if getattr(hv_winding, "conductorDiameter", None) is None:
+        hv_winding.conductorDiameter = safe_float(hv_results.get("hvBreadth"), 0.0)
+    if getattr(hv_winding, "isConductorRound", None) is None:
+        hv_winding.isConductorRound = hv_results.get("hvIsConductorRound")
+    if getattr(hv_winding, "isEnamel", None) is None:
+        hv_winding.isEnamel = hv_results.get("hvIsEnamel")
+
+    return hv_winding
+
+
 def _get_high_side_distribution(multi_winding, lv_results, hv_results):
     selection = multi_winding.windings
     volts_per_turn = safe_float(lv_results.get("revisedVoltsPerTurn"), 0.0)
@@ -526,18 +559,19 @@ def _build_hv_main_results(multi_winding, lv_results, hv_results, allocation):
     if multi_winding.windings == DEFAULT_WINDING_SELECTION:
         return hv_results
 
+    hv_winding = _seed_hv_main_winding(getattr(multi_winding, "hvWindings", None), hv_results)
     hv_seed_dimensions = {
         "previousWinding": "lv",
         "previousOuterDiameter": safe_float(lv_results["lvOd"], 0.0),
         "previousRadialThickness": safe_float(lv_results["lvRadialThickness"], 0.0),
-        "previousWindingLength": safe_float(lv_results["lvWindingLength"], 0.0),
+        "previousWindingLength": safe_float(hv_results["hvWindingLength"], 0.0),
         "gapField": "LvtoHV",
         "gapToPrevious": safe_float(hv_results["lvHvGap"], 0.0),
     }
     section_results = build_hv_section_results(
         section_name="hv",
         winding_type=getattr(multi_winding, "hvWindingType", "HELICAL"),
-        winding=getattr(multi_winding, "hvWindings", None),
+        winding=hv_winding,
         hv_source=hv_results,
         material=multi_winding.hvConductorMaterial,
         allocated_turns=allocation.get("turns", safe_float(hv_results.get("hvTurnsPerPhase"), 0.0)),
@@ -870,7 +904,7 @@ def _parallel_label(radial_parallel, axial_parallel, total_conductors):
 def _conductor_size_label(breadth, height, is_round):
     if is_round:
         return f"Round {breadth}"
-    return f"{breadth} X {height}"
+    return f"{breadth} L X {height} B"
 
 
 def _apply_lv_results_to_model(winding, lv_results, winding_type):
