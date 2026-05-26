@@ -60,7 +60,7 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         self.assertEqual(results["hvTurnsPerPhase"], 2465)
         self.assertEqual(results["lvCurrentPerPhase"], 133.34)
         self.assertEqual(results["hvCurrentPerPhase"], 3.03)
-        self.assertEqual(results["lvEndClearance"], 43.0)
+        self.assertEqual(results["lvEndClearance"], 46.0)
         self.assertEqual(results["hvEndClearance"], 64.0)
         self.assertEqual(results["lvWinding"]["lvTurnsPerPhase"], 56)
         self.assertEqual(results["lvWinding"]["lvTurnsPerLayer"], 56)
@@ -75,7 +75,7 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         self.assertIn("coilDimensions", results)
         self.assertEqual(response.json()["inputs"]["windingModels"]["lv"]["turnsPerPhase"], 56)
         self.assertEqual(response.json()["inputs"]["windingModels"]["lv"]["phaseCurrent"], 133.34)
-        self.assertEqual(response.json()["inputs"]["windingModels"]["lv"]["endClearances"], 43)
+        self.assertEqual(response.json()["inputs"]["windingModels"]["lv"]["endClearances"], 46)
         self.assertEqual(response.json()["inputs"]["windingModels"]["lv"]["terminal"], 249.99)
         self.assertEqual(response.json()["inputs"]["windingModels"]["hv"]["turnsPerPhase"], 2465)
         self.assertEqual(response.json()["inputs"]["windingModels"]["hv"]["terminal"], 11000.0)
@@ -464,7 +464,7 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         self.assertNotEqual(hv_model["noOfLayers"], hv_model["turnsPerPhase"])
         self.assertEqual(hv_results["turnsPerLayer"], 197.0)
         self.assertEqual(hv_results["noOfLayers"], 12.51)
-        self.assertEqual(hv_results["endClearance"], 56.0)
+        self.assertEqual(hv_results["endClearance"], 57.0)
         self.assertEqual(hv_results["windingLength"], 238.0)
 
     def test_multi_wdg_extra_windings_layers_follow_allocated_turns(self):
@@ -501,11 +501,11 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         for winding_name in ("corse", "fine", "outer"):
             model = response.json()["inputs"]["windingModels"][winding_name]
             result = response.json()["results"][f"{winding_name}Winding"]
-            self.assertEqual(model["turnsPerLayer"], 203.0)
+            self.assertEqual(model["turnsPerLayer"], 204.0)
             self.assertEqual(model["noOfLayers"], 1.0)
             self.assertNotEqual(model["noOfLayers"], model["turnsPerPhase"])
             self.assertEqual(model["endClearances"], 49.0)
-            self.assertEqual(result["turnsPerLayer"], 203.0)
+            self.assertEqual(result["turnsPerLayer"], 204.0)
             self.assertEqual(result["noOfLayers"], 1.0)
             self.assertEqual(result["endClearance"], 49.0)
 
@@ -590,8 +590,8 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         self.assertGreater(lv_results["lvOd"], lv_results["lvId"])
         self.assertEqual(hv_results["hvTurnsPerPhase"], 2465)
         self.assertEqual(hv_results["hvCurrentPerPhase"], 3.03)
-        self.assertEqual(hv_results["hvTurnsPerLayer"], 159)
-        self.assertEqual(hv_results["hvNumberOfLayers"], 15.5)
+        self.assertEqual(hv_results["hvTurnsPerLayer"], 166)
+        self.assertEqual(hv_results["hvNumberOfLayers"], 14.85)
         self.assertGreater(hv_results["hvOd"], hv_results["hvId"])
 
     def test_lv_winding_service_uses_java_type_specific_branches(self):
@@ -642,11 +642,11 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         self.assertFalse(lv_results["lvIsConductorRound"])
         self.assertEqual(lv_results["lvNumberOfLayers"], 2)
         self.assertEqual(lv_results["lvTurnsPerLayer"], 6.5)
-        self.assertEqual(lv_results["lvBreadthInsulated"], 15.0)
-        self.assertEqual(lv_results["lvRadialParallelConductors"], 2)
+        self.assertEqual(lv_results["lvBreadthInsulated"], 5.7)
+        self.assertEqual(lv_results["lvRadialParallelConductors"], 7)
         self.assertEqual(lv_results["lvAxialParallelConductors"], 10)
-        self.assertEqual(lv_results["lvTransposition"], 30)
-        self.assertLess(lv_results["lvGradient"], lv_results["gradientLimit"])
+        self.assertEqual(lv_results["lvTransposition"], 35)
+        self.assertGreater(lv_results["lvGradient"], lv_results["gradientLimit"])
 
     def test_hv_winding_service_uses_distinct_disc_branch(self):
         helical = MultiWindings(

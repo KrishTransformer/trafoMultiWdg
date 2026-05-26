@@ -53,6 +53,7 @@ from api.services.windingFormulae import (
     get_stray_loss_for_disc,
     get_stray_loss_for_foil,
     get_turns_per_phase,
+    get_transposition,
     get_v0,
     get_volts_per_turn,
     get_winding_length,
@@ -278,7 +279,8 @@ def _apply_gradient_loop_helical(ctx, values, user_ducts):
             values["lvTransposition"],
             values["lvIsConductorRound"],
         )
-        values["lvLoadLoss"] = get_load_loss(ctx["material"], values["lvBareWeight"], values["lVRevisedCurrentDensity"], values["%lvStrayLoss"])
+        current_density_for_loss = values.get("lvLoadLossCurrentDensity", values["lVRevisedCurrentDensity"])
+        values["lvLoadLoss"] = get_load_loss(ctx["material"], values["lvBareWeight"], current_density_for_loss, values["%lvStrayLoss"])
         values["lvGradient"] = get_lv_gradient(
             values["lvLoadLoss"],
             (values["lvNoOfDuct"] * 2) + 2,
@@ -316,7 +318,7 @@ def _calculate_helical_round(ctx, winding):
     revised_current_density = three_digit_decimal(ctx["lvCurrentPerPhase"] / (revised_cond_cross_section * number_of_conductors))
     total_cond_cross_section = get_actual_conductor_x_sec(revised_cond_cross_section, number_of_conductors)
     inter_layer_insulation = get_inter_layer_insulation(
-        ctx["revisedVoltsPerTurn"],
+        ctx["voltsPerTurn"],
         turns_per_layer,
         conductor_insulation,
         bool(winding.isEnamel),
@@ -387,6 +389,7 @@ def _calculate_helical_round(ctx, winding):
         "lvRevisedCondCrossSection": revised_cond_cross_section,
         "lvTotalCondCrossSection": total_cond_cross_section,
         "lVRevisedCurrentDensity": revised_current_density,
+        "lvLoadLossCurrentDensity": ctx["currentDensity"],
         "lvInterLayerInsulation": inter_layer_insulation,
         "lvRadialThickness": radial_thickness,
         "lvId": lv_id,
@@ -418,6 +421,9 @@ def _calculate_helical_rectangular(ctx, winding):
     number_of_conductors = radial_parallel * axial_parallel
     cross_sec_per_conductor = get_x_sec_per_conductor(conductor_cross_section, number_of_conductors)
     transposition = 30 if radial_parallel > 1 else 0
+    window_height = ctx["windowHeight"]
+    end_clearance = ctx["lvEndClearance"]
+    winding_length = ctx["lvWindingLength"]
     conductor_insulation = get_conductor_insulation(
         ctx["kVA"],
         ctx["lowVoltage"],
@@ -427,26 +433,6 @@ def _calculate_helical_rectangular(ctx, winding):
         winding.condInsulation,
         ctx["dryType"],
     )
-    if winding.condBreadth is not None:
-        breadth = winding.condBreadth
-    else:
-        breadth = one_digit_decimal(max(2.0, math.sqrt(cross_sec_per_conductor * 4)))
-        # breadth = get_bi(winding_length, turns_per_layer, axial_parallel, transposition, radial_parallel)
-
-    if winding.condHeight is not None:
-        height = winding.condHeight
-    else:
-        height = get_height(cross_sec_per_conductor, breadth)
-
-    if winding.condBreadth is None and winding.condHeight is None:
-        while breadth > 6 * height:
-            height = one_digit_decimal(height + 0.1)
-            breadth = get_height(cross_sec_per_conductor, height)
-            if breadth <= 6 * height:
-                break
-
-    breadth_insulated = get_height_insulated(breadth, conductor_insulation)
-    height_insulated = get_height_insulated(height, conductor_insulation)
 
     if winding.noOfLayers and winding.noOfLayers > 0:
         number_of_layers = winding.noOfLayers
@@ -455,17 +441,105 @@ def _calculate_helical_rectangular(ctx, winding):
         turns_per_layer = winding.turnsPerLayer
         number_of_layers = two_digit_decimal(ctx["lvTurnsPerPhase"] / turns_per_layer)
     else:
+        initial_breadth = one_digit_decimal(max(2.0, math.sqrt(cross_sec_per_conductor * 4)))
+        initial_breadth_insulated = get_height_insulated(initial_breadth, conductor_insulation)
         turns_per_layer = max(
             1,
-            int(math.floor((ctx["lvWindingLength"] - transposition) / max((breadth_insulated * axial_parallel), 0.1))),
+            int(math.floor((ctx["lvWindingLength"] - transposition) / max((initial_breadth_insulated * axial_parallel), 0.1))),
         )
         number_of_layers = two_digit_decimal(ctx["lvTurnsPerPhase"] / turns_per_layer)
 
+    breadth_insulated = get_bi(winding_length, turns_per_layer, axial_parallel, transposition, radial_parallel)
+
+    if winding.condBreadth is not None:
+        breadth = winding.condBreadth
+        breadth_insulated = breadth + conductor_insulation
+        winding_length = next_integer(breadth_insulated * axial_parallel * (turns_per_layer + 1))
+        window_height = winding_length + transposition + end_clearance + ctx["permaWoodRing"]
+    else:
+        breadth = get_breadth(breadth_insulated, conductor_insulation, radial_parallel)
+        breadth_insulated = breadth + conductor_insulation
+
+    if (
+        winding.radialParallelCond is None
+        and winding.axialParallelCond is None
+        and winding.condBreadth is None
+    ):
+        while breadth_insulated > 14.5:
+            if 14.2 <= breadth_insulated <= 15:
+                window_height = next_integer(
+                    window_height - ((breadth_insulated - 14.4) * (turns_per_layer + 1) * axial_parallel)
+                )
+                winding_length = get_winding_length(window_height, end_clearance, ctx["permaWoodRing"])
+                breadth_insulated = get_bi(winding_length, turns_per_layer, axial_parallel, transposition, radial_parallel)
+                breadth = get_breadth(breadth_insulated, conductor_insulation, radial_parallel)
+                breadth_insulated = breadth + conductor_insulation
+            elif breadth_insulated > 15:
+                axial_parallel += 1
+                number_of_conductors = axial_parallel * radial_parallel
+                cross_sec_per_conductor = get_x_sec_per_conductor(conductor_cross_section, number_of_conductors)
+                breadth_insulated = get_bi(winding_length, turns_per_layer, axial_parallel, transposition, radial_parallel)
+                breadth = get_breadth(breadth_insulated, conductor_insulation, radial_parallel)
+                breadth_insulated = breadth + conductor_insulation
+
+            if breadth_insulated <= 14.5:
+                break
+
+    if winding.condHeight is not None:
+        height = winding.condHeight
+        if winding.condBreadth is None:
+            breadth = get_height(cross_sec_per_conductor, height)
+            breadth_insulated = breadth + conductor_insulation
+    else:
+        height = get_height(cross_sec_per_conductor, breadth)
+
+    height_insulated = get_height_insulated(height, conductor_insulation)
     revised_cond_cross_section = get_revised_conductor_cross_section(breadth, height)
     revised_current_density = three_digit_decimal(ctx["lvCurrentPerPhase"] / (revised_cond_cross_section * number_of_conductors))
+    if winding.condBreadth is None:
+        while revised_current_density > ctx["currentDensity"] and breadth < 14.4:
+            breadth = one_digit_decimal(breadth + 0.1)
+            revised_cond_cross_section = get_revised_conductor_cross_section(breadth, height)
+            revised_current_density = three_digit_decimal(
+                ctx["lvCurrentPerPhase"] / (revised_cond_cross_section * number_of_conductors)
+            )
+            breadth_insulated = breadth + conductor_insulation
+            end_clearance_candidate = int(
+                math.floor(
+                    (window_height - (breadth_insulated * (turns_per_layer + 1) * axial_parallel)) / 2
+                )
+            )
+            if (end_clearance - end_clearance_candidate) > 3 or breadth > 14.4:
+                break
+            end_clearance = end_clearance_candidate
+
+    winding_length = window_height - end_clearance - ctx["permaWoodRing"] - transposition
+
+    if winding.condHeight is None:
+        while revised_current_density > ctx["currentDensity"] and height < 4.5:
+            height = one_digit_decimal(height + 0.1)
+            revised_cond_cross_section = get_revised_conductor_cross_section(breadth, height)
+            revised_current_density = three_digit_decimal(ctx["lvCurrentPerPhase"] / revised_cond_cross_section)
+            height_insulated = get_height_insulated(height, conductor_insulation)
+            if height > 4.5:
+                break
+
+    total_cond_cross_section = get_actual_conductor_x_sec(revised_cond_cross_section, number_of_conductors)
+    transposition = get_transposition(
+        breadth_insulated,
+        winding_length,
+        transposition,
+        turns_per_layer,
+        radial_parallel,
+        axial_parallel,
+    )
+    revised_cond_cross_section = get_revised_conductor_cross_section(breadth, height)
+    revised_current_density = three_digit_decimal(
+        ctx["lvCurrentPerPhase"] / (revised_cond_cross_section * number_of_conductors)
+    )
     total_cond_cross_section = get_actual_conductor_x_sec(revised_cond_cross_section, number_of_conductors)
     inter_layer_insulation = get_inter_layer_insulation(
-        ctx["revisedVoltsPerTurn"],
+        ctx["voltsPerTurn"],
         turns_per_layer,
         conductor_insulation,
         bool(winding.isEnamel),
@@ -473,7 +547,7 @@ def _calculate_helical_rectangular(ctx, winding):
         ctx["dryType"],
     )
     no_of_ducts = _coerce_ducts(max(0, winding.ducts or 0), number_of_layers)
-    duct_thickness = get_duct_size(ctx["kVA"], ctx["lvWindingLength"], winding.ductSize, ctx["dryType"])
+    duct_thickness = get_duct_size(ctx["kVA"], winding_length, winding.ductSize, ctx["dryType"])
     radial_thickness = get_radial_thickness(
         height_insulated,
         radial_parallel,
@@ -484,7 +558,7 @@ def _calculate_helical_rectangular(ctx, winding):
         True,
     )
     winding_length = next_integer(breadth_insulated * (turns_per_layer + 1) * axial_parallel)
-    end_clearance = ctx["windowHeight"] - winding_length - transposition - ctx["permaWoodRing"]
+    end_clearance = window_height - winding_length - transposition - ctx["permaWoodRing"]
     lv_id = get_id(ctx["coreDiameter"], ctx["coreGap"])
     lv_od = get_od(lv_id, radial_thickness)
     lv_lmt = get_lmt(lv_id, lv_od)
@@ -515,6 +589,87 @@ def _calculate_helical_rectangular(ctx, winding):
         transposition,
         False,
     )
+
+    if winding.radialParallelCond is None and winding.axialParallelCond is None:
+        while stray_loss > 10:
+            radial_parallel += 1
+            transposition = 20
+            number_of_conductors = axial_parallel * radial_parallel
+            cross_sec_per_conductor = get_x_sec_per_conductor(total_cond_cross_section, number_of_conductors)
+            breadth_insulated = get_bi(winding_length, turns_per_layer, axial_parallel, transposition, radial_parallel)
+            breadth = get_breadth(breadth_insulated, conductor_insulation, radial_parallel)
+            breadth_insulated = breadth + conductor_insulation
+            height = get_height(cross_sec_per_conductor, breadth)
+            height_insulated = get_height_insulated(height, conductor_insulation)
+            revised_cond_cross_section = get_revised_conductor_cross_section(breadth, height)
+            revised_current_density = three_digit_decimal(
+                ctx["lvCurrentPerPhase"] / (revised_cond_cross_section * number_of_conductors)
+            )
+            transposition = get_transposition(
+                breadth_insulated,
+                winding_length,
+                transposition,
+                turns_per_layer,
+                radial_parallel,
+                axial_parallel,
+            )
+            revised_cond_cross_section = get_revised_conductor_cross_section(breadth, height)
+            revised_current_density = three_digit_decimal(
+                ctx["lvCurrentPerPhase"] / (revised_cond_cross_section * number_of_conductors)
+            )
+            total_cond_cross_section = get_actual_conductor_x_sec(revised_cond_cross_section, number_of_conductors)
+            inter_layer_insulation = get_inter_layer_insulation(
+                ctx["voltsPerTurn"],
+                turns_per_layer,
+                conductor_insulation,
+                bool(winding.isEnamel),
+                winding.interLayerInsulation,
+                ctx["dryType"],
+            )
+            radial_thickness = get_radial_thickness(
+                height_insulated,
+                radial_parallel,
+                number_of_layers,
+                inter_layer_insulation,
+                no_of_ducts,
+                duct_thickness,
+                True,
+            )
+            winding_length = next_integer(breadth_insulated * (turns_per_layer + 1) * axial_parallel)
+            end_clearance = window_height - winding_length - transposition - ctx["permaWoodRing"]
+            lv_id = get_id(ctx["coreDiameter"], ctx["coreGap"])
+            lv_od = get_od(lv_id, radial_thickness)
+            lv_lmt = get_lmt(lv_id, lv_od)
+            wire_length = get_wire_length(lv_lmt, ctx["lvTurnsPerPhase"], 3, number_of_conductors)
+            r75 = get_r75(ctx["material"], lv_lmt, ctx["lvTurnsPerPhase"], total_cond_cross_section)
+            r26 = get_r26(r75, ctx["material"])
+            bare_weight = get_bare_weight(lv_lmt, ctx["lvTurnsPerPhase"], total_cond_cross_section, ctx["material"])
+            insulated_weight = get_insulated_weight(
+                breadth_insulated,
+                height_insulated,
+                breadth,
+                height,
+                ctx["material"],
+                bare_weight,
+                bool(winding.isEnamel),
+            )
+            procurement_weight = get_procurement_weight(insulated_weight, number_of_conductors)
+            stray_loss = get_stray_loss(
+                breadth,
+                breadth_insulated,
+                height,
+                turns_per_layer,
+                radial_parallel,
+                axial_parallel,
+                conductor_insulation,
+                ctx["material"],
+                number_of_layers,
+                transposition,
+                False,
+            )
+            if radial_parallel > 6:
+                break
+
     load_loss = get_load_loss(ctx["material"], bare_weight, revised_current_density, stray_loss)
     gradient = get_lv_gradient(
         load_loss,
@@ -954,4 +1109,13 @@ def calculate_lv_windings(multi_winding):
         is_round = user_round if user_round is not None else is_conductor_round(cross_sec_per_conductor)
         values = _calculate_helical_round(ctx, winding) if is_round else _calculate_helical_rectangular(ctx, winding)
 
+    rounded_window_height = values["lvWindingLength"] + values["lvEndClearance"] + ctx["permaWoodRing"] + values["lvTransposition"]
+    if rounded_window_height % 5 != 0:
+        window_height_round_off = 5 - (rounded_window_height % 5)
+        ctx["windowHeight"] = rounded_window_height + window_height_round_off
+        values["lvEndClearance"] += window_height_round_off
+    else:
+        ctx["windowHeight"] = rounded_window_height
+
+    values.setdefault("lvUnpressedWindingLength", 0)
     return _finalize_result(ctx, values)
