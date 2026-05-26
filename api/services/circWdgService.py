@@ -1,6 +1,7 @@
 import math
 
 from api.models import CoilDimensions, Core, Windings
+from api.services.numberUtils import next_integer, two_digit_decimal
 from api.services._windingServiceSupport import (
     build_geometry_snapshot,
     build_hv_section_results,
@@ -45,7 +46,6 @@ from api.services.windingFormulae import (
     get_low_voltage,
     get_lv_hv_ins,
     get_nl_current_percentage,
-    next_integer,
     get_tank_loss,
     get_test_and_imp_test,
     get_vector_group,
@@ -53,7 +53,6 @@ from api.services.windingFormulae import (
     h1h2,
     is_ez_within_range,
     ls,
-    two_digit_decimal,
 )
 
 DEFAULT_WINDING_SELECTION = "2 Wdg (LV and HV-Main)"

@@ -1,6 +1,13 @@
 import math
 
 from api.models import Windings
+from api.services.numberUtils import (
+    next_integer,
+    one_digit_decimal,
+    three_digit_decimal,
+    two_digit_decimal,
+    two_digit_decimal_part,
+)
 from api.services._windingServiceSupport import _select_disc_conductor_geometry
 from api.services.windingFormulae import (
     CLASS_B,
@@ -60,10 +67,6 @@ from api.services.windingFormulae import (
     get_x_sec_per_conductor,
     hv_step_voltage,
     is_conductor_round,
-    next_integer,
-    one_digit_decimal,
-    three_digit_decimal,
-    two_digit_decimal,
 )
 
 INSULATION_COMPRESSION = 0.93
@@ -111,19 +114,15 @@ def _adjust_helical_hv_layers(hv_turns_at_highest, turns_per_layer):
     return adjusted_turns_per_layer, two_digit_decimal(number_of_layers_rough)
 
 
-def _two_digit_decimal_part(value):
-    return abs(value - int(value))
-
-
 def _half_up(value):
-    return int(math.ceil(value)) if _two_digit_decimal_part(value) >= 0.5 else int(math.floor(value))
+    return int(math.ceil(value)) if two_digit_decimal_part(value) >= 0.5 else int(math.floor(value))
 
 
 def _adjust_xover_hv_layers(hv_turns_per_coil, turns_per_layer):
     adjusted_turns_per_layer = max(1, int(math.floor(turns_per_layer)))
     number_of_layers_rough = hv_turns_per_coil / adjusted_turns_per_layer
 
-    while adjusted_turns_per_layer > 1 and _two_digit_decimal_part(number_of_layers_rough) < 0.5:
+    while adjusted_turns_per_layer > 1 and two_digit_decimal_part(number_of_layers_rough) < 0.5:
         adjusted_turns_per_layer -= 1
         number_of_layers_rough = hv_turns_per_coil / adjusted_turns_per_layer
 

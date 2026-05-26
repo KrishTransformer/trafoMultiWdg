@@ -1,5 +1,19 @@
-from decimal import Decimal, ROUND_HALF_UP
 import math
+
+from api.services.numberUtils import (
+    four_digit_decimal,
+    next_0_integer,
+    next_5or0_integer,
+    next_integer,
+    one_digit_decimal,
+    one_digit_decimal_floor,
+    previous_5or0_integer,
+    six_digit_decimal,
+    three_digit_decimal,
+    two_digit_decimal,
+    two_digit_decimal_floor,
+    two_digit_decimal_part,
+)
 
 
 COPPER = "COPPER"
@@ -51,58 +65,6 @@ def _is_dry_class(dry_temp_class, class_name):
 
 def _is_winding_type(winding_type, expected):
     return _normalize_upper(winding_type) == expected
-
-
-def _quantize(value, pattern):
-    return float(Decimal(str(value)).quantize(Decimal(pattern), rounding=ROUND_HALF_UP))
-
-
-def one_digit_decimal(value):
-    return _quantize(value, "0.0")
-
-
-def two_digit_decimal(value):
-    return _quantize(value, "0.00")
-
-
-def three_digit_decimal(value):
-    return _quantize(value, "0.000")
-
-
-def four_digit_decimal(value):
-    return _quantize(value, "0.0000")
-
-
-def six_digit_decimal(value):
-    return _quantize(value, "0.000000")
-
-
-def one_digit_decimal_floor(value):
-    return math.floor(value * 10) / 10.0
-
-
-def two_digit_decimal_floor(value):
-    return math.floor(value * 100) / 100.0
-
-
-def two_digit_decimal_part(value):
-    return abs(value - int(value))
-
-
-def next_integer(value):
-    return int(math.ceil(value))
-
-
-def next_0_integer(value):
-    return int(math.ceil(value))
-
-
-def next_5or0_integer(value):
-    return int(math.ceil(value / 5.0) * 5)
-
-
-def previous_5or0_integer(value):
-    return int(math.floor(value / 5.0) * 5)
 
 
 def has_star_connection(vector_group):

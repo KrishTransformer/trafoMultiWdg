@@ -1,6 +1,13 @@
 import math
 
 from api.models import Windings
+from api.services.numberUtils import (
+    next_integer,
+    one_digit_decimal,
+    three_digit_decimal,
+    two_digit_decimal,
+    two_digit_decimal_part,
+)
 from api.services.windingFormulae import (
     COPPER,
     get_actual_conductor_x_sec,
@@ -22,10 +29,6 @@ from api.services.windingFormulae import (
     get_stray_loss,
     get_stray_loss_for_disc,
     get_wire_length,
-    one_digit_decimal,
-    next_integer,
-    three_digit_decimal,
-    two_digit_decimal,
 )
 
 INSULATION_COMPRESSION = 0.93
@@ -181,10 +184,6 @@ def _safe_layers(turns, turns_per_layer):
     return max(1.0, two_digit_decimal(turns / max(turns_per_layer, 1.0)))
 
 
-def _two_digit_decimal_part(value):
-    return abs(value - int(value))
-
-
 def _next_even_integer(value):
     even_value = int(math.ceil(value))
     if even_value % 2 != 0:
@@ -225,10 +224,10 @@ def _select_disc_conductor_geometry(
     original_no_of_discs = no_of_discs
     turns_per_disc_rough = turns / max(no_of_discs, 1)
 
-    while _two_digit_decimal_part(turns_per_disc_rough) < 0.7:
+    while two_digit_decimal_part(turns_per_disc_rough) < 0.7:
         no_of_discs += 2
         turns_per_disc_rough = turns / max(no_of_discs, 1)
-        if _two_digit_decimal_part(turns_per_disc_rough) >= 0.7:
+        if two_digit_decimal_part(turns_per_disc_rough) >= 0.7:
             break
 
     turns_per_disc = int(math.ceil(turns_per_disc_rough))
@@ -243,10 +242,10 @@ def _select_disc_conductor_geometry(
         if breadth < 5 and height > 1.7:
             no_of_discs = original_no_of_discs
             turns_per_disc_rough = turns / max(no_of_discs, 1)
-            while no_of_discs > 2 and _two_digit_decimal_part(turns_per_disc_rough) < 0.7:
+            while no_of_discs > 2 and two_digit_decimal_part(turns_per_disc_rough) < 0.7:
                 no_of_discs -= 2
                 turns_per_disc_rough = turns / max(no_of_discs, 1)
-                if _two_digit_decimal_part(turns_per_disc_rough) >= 0.7:
+                if two_digit_decimal_part(turns_per_disc_rough) >= 0.7:
                     break
 
             turns_per_disc = int(math.ceil(turns_per_disc_rough))

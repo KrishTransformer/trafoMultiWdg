@@ -1,6 +1,14 @@
 import math
 
 from api.models import Windings
+from api.services.numberUtils import (
+    next_integer,
+    one_digit_decimal,
+    one_digit_decimal_floor,
+    three_digit_decimal,
+    two_digit_decimal,
+    two_digit_decimal_part,
+)
 from api.services.windingFormulae import (
     CLASS_B,
     ECONOMIC,
@@ -64,12 +72,6 @@ from api.services.windingFormulae import (
     get_foil_end_strip,
     get_foil_length,
     is_conductor_round,
-    next_integer,
-    one_digit_decimal,
-    one_digit_decimal_floor,
-    three_digit_decimal,
-    two_digit_decimal,
-    two_digit_decimal_part,
 )
 
 

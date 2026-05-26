@@ -1,6 +1,7 @@
 import math
 
-from api.services.windingFormulae import ek, two_digit_decimal
+from api.services.numberUtils import two_digit_decimal
+from api.services.windingFormulae import ek
 
 
 DISC_TYPES = {"DISC", "LAYER_DISC"}
