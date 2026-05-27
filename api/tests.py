@@ -12,6 +12,7 @@ from api.services import (
     calculate_lv_windings,
     calculate_outer_windings,
 )
+from api.services.windingFormulae import select_radiators
 
 
 class MultiWdgCalculatorEndpointTests(TestCase):
@@ -675,3 +676,65 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         self.assertFalse(hv_model["isConductorRound"])
         self.assertIn(" L X ", hv_model["conductorSizes"])
         self.assertTrue(hv_model["conductorSizes"].endswith(" B"))
+
+
+class RadiatorSelectionTests(TestCase):
+    def test_select_radiators_matches_vb_style_selection(self):
+        result = select_radiators(
+            kva=1000,
+            cu_loss=12000,
+            fe_loss=3000,
+            tank_length=1500,
+            tank_width=800,
+            tank_height=1600,
+            core_dia=500,
+            temp_wdg=65,
+            temp_top=50,
+        )
+
+        self.assertEqual(result["selectionText"], "1000 x 300 - 11 x 6")
+        self.assertEqual(result["radiatorLength"], 1000)
+        self.assertEqual(result["radiatorWidth"], 300)
+        self.assertEqual(result["radiatorSections"], 11)
+        self.assertEqual(result["radiatorBanks"], 6)
+        self.assertEqual(result["temperatureDependenceFactor"], 280)
+        self.assertEqual(result["radiatorArea"], 40.43)
+        self.assertEqual(result["totalRadiatorWeight"], 412)
+        self.assertEqual(result["totalRadiatorOil"], 168)
+
+    def test_select_radiators_returns_nil_for_dry_type(self):
+        result = select_radiators(
+            kva=1000,
+            cu_loss=12000,
+            fe_loss=3000,
+            tank_length=1500,
+            tank_width=800,
+            tank_height=1600,
+            core_dia=500,
+            temp_wdg=65,
+            temp_top=50,
+            dry_type=True,
+        )
+
+        self.assertEqual(result["selectionText"], " NIL ")
+        self.assertEqual(result["radiatorSections"], 0)
+        self.assertEqual(result["totalRadiatorWeight"], 0)
+
+    def test_select_radiators_supports_pipe_cooling_branch(self):
+        result = select_radiators(
+            kva=1000,
+            cu_loss=12000,
+            fe_loss=3000,
+            tank_length=1500,
+            tank_width=800,
+            tank_height=1600,
+            core_dia=500,
+            temp_wdg=65,
+            temp_top=50,
+            pipes_only=True,
+            pipe_dia=38,
+        )
+
+        self.assertEqual(result["selectionText"], "38mm Pipes x 271.0 M ")
+        self.assertEqual(result["pipeLength"], 271.0)
+        self.assertEqual(result["radiatorSections"], 0)

@@ -1703,6 +1703,299 @@ def get_radiator_section(no_of_fins):
     return [section, no_of_radiators, revised_no_of_fins]
 
 
+def _vb_round1(value):
+    return math.floor((value + 0.095) * 10) / 10.0
+
+
+def _get_csp_heat(tank_length, tank_width, tank_height):
+    tank_perimeter = 2 * (tank_length + tank_width)
+    csp_air_height = tank_height * 0.55
+    return tank_perimeter * csp_air_height * 250 / 1_000_000.0
+
+
+def _get_temp_dependence_factor(temp_wdg, temp_top):
+    return 400 - (temp_wdg - temp_top) * 8
+
+
+def _get_radiator_length(tank_height, core_dia):
+    clear_height = tank_height - core_dia - 85
+    return int((clear_height + 50) // 100) * 100
+
+
+def _get_max_sections(kva):
+    if kva <= 63:
+        return 10
+    if kva <= 250:
+        return 16
+    if kva <= 500:
+        return 32
+    if kva <= 1600:
+        return 72
+    return 200
+
+
+def _get_max_sections_per_radiator(kva):
+    if kva <= 63:
+        return 5
+    if kva <= 250:
+        return 6
+    if kva <= 500:
+        return 8
+    if kva <= 1600:
+        return 12
+    return 19
+
+
+def _get_default_radiator_width(kva):
+    if kva <= 100:
+        return 226
+    if kva < 5000:
+        return 300
+    return 520
+
+
+def _get_max_radiator_banks(tank_length, radiator_width, terminal_lv, terminal_hv):
+    pitch = radiator_width + 70
+    available_length = 2 * (tank_length + 200)
+    radiator_banks = (int(available_length / pitch) // 2) * 2
+
+    if _normalize_upper(terminal_lv) == "CABLE BOX":
+        radiator_banks -= 2
+    if _normalize_upper(terminal_hv) == "CABLE BOX":
+        radiator_banks -= 2
+    return max(2, radiator_banks)
+
+
+def _get_radiator_sections(radiator_area, radiator_length, radiator_width, radiator_banks):
+    area_in_sq_mm = radiator_area * 1_000_000
+    section_area = radiator_length * 2 * radiator_width
+    return int(((area_in_sq_mm / section_area) + 1) / radiator_banks)
+
+
+def _get_radiator_section_weight_and_oil(radiator_length, radiator_width):
+    if radiator_width <= 226:
+        length_step = (radiator_length - 500) / 100.0
+        width_factor = radiator_width / 226.0
+        return (
+            2.55 + length_step * 0.45 * width_factor,
+            1.25 + length_step * 0.15 * width_factor,
+        )
+    if radiator_width <= 500:
+        length_step = (radiator_length - 500) / 100.0
+        width_factor = radiator_width / 300.0
+        return (
+            3.25 + length_step * 0.6 * width_factor,
+            1.55 + length_step * 0.2 * width_factor,
+        )
+
+    length_step = (radiator_length - 600) / 100.0
+    width_factor = radiator_width / 520.0
+    return (
+        6.52 + length_step * width_factor,
+        2.52 + length_step * 0.4 * width_factor,
+    )
+
+
+def select_radiators(
+    kva,
+    cu_loss,
+    fe_loss,
+    tank_length,
+    tank_width,
+    tank_height,
+    core_dia,
+    temp_wdg,
+    temp_top,
+    terminal_lv=None,
+    terminal_hv=None,
+    *,
+    dry_type=False,
+    radiator_selection_enabled=True,
+    csp_radiator=False,
+    csp_only=False,
+    pipes_only=False,
+    csp_pipes=False,
+    pipe_dia=38,
+    user_rad_width=None,
+):
+    # Port of VB6 Sub Radiators().
+    # This replaces radiator sizing from the older kw55-based approach.
+    # Keep get_kw55* only as legacy reference; radiator selection is now
+    # driven directly from CuLoss, FeLoss, TempWdg and TempTop.
+    total_loss = cu_loss + fe_loss
+    tank_dissipation = (tank_length + tank_width) * tank_height / 1000.0
+    new_tank_height = 0.0
+    pipe_length = 0.0
+    total_radiator_weight = 0
+    total_radiator_oil = 0.0
+    csp_heat = 0.0
+
+    def _build_result(**overrides):
+        result = {
+            "selectionText": "",
+            "radiatorLength": 0,
+            "radiatorWidth": 0,
+            "radiatorSections": 0,
+            "radiatorBanks": 0,
+            "radiatorArea": 0.0,
+            "temperatureDependenceFactor": 0.0,
+            "tankDissipation": tank_dissipation,
+            "cspHeat": csp_heat,
+            "totalLoss": total_loss,
+            "newTankHeight": new_tank_height,
+            "pipeLength": pipe_length,
+            "pipeOil": 0.0,
+            "totalRadiatorWeight": total_radiator_weight,
+            "totalRadiatorOil": total_radiator_oil,
+            "extendedLayout": False,
+        }
+        result.update(overrides)
+        return result
+
+    def _no_radiator_result():
+        nonlocal csp_heat, new_tank_height, pipe_length, total_radiator_weight, total_radiator_oil
+
+        selection_text = ""
+        if dry_type:
+            return _build_result(
+                selectionText=" NIL ",
+                cspHeat=0.0,
+                newTankHeight=0.0,
+                pipeLength=0.0,
+                totalRadiatorWeight=0,
+                totalRadiatorOil=0.0,
+            )
+
+        if csp_only or csp_pipes:
+            csp_heat = _get_csp_heat(tank_length, tank_width, tank_height)
+            new_tank_height = tank_height * 1.55
+
+        if pipes_only or csp_pipes:
+            pipe_heat = total_loss - tank_dissipation - csp_heat
+            pipe_heat_rate = math.pi * (pipe_dia / 1000.0) * 350
+            if pipe_heat_rate > 0:
+                pipe_length = _vb_round1(pipe_heat / pipe_heat_rate)
+            if pipe_length > 0:
+                selection_text = f"{pipe_dia}mm Pipes x {pipe_length} M "
+                pipe_oil = math.pi * (pipe_dia / 100.0) * pipe_length
+                total_radiator_oil += pipe_oil
+                pipe_wall_volume = math.pi * 7.65 * 100 * (pipe_dia / 1000.0) * 3 / 1000.0
+                total_radiator_weight = int(pipe_wall_volume * pipe_length) + 1
+            else:
+                pipe_oil = 0.0
+        else:
+            pipe_oil = 0.0
+
+        if new_tank_height > 0:
+            selection_text = f"{selection_text}:TankNewH = {int(new_tank_height)}" if selection_text else f":TankNewH = {int(new_tank_height)}"
+
+        return _build_result(
+            selectionText=selection_text,
+            cspHeat=csp_heat,
+            newTankHeight=new_tank_height,
+            pipeLength=pipe_length,
+            pipeOil=pipe_oil,
+            totalRadiatorWeight=total_radiator_weight,
+            totalRadiatorOil=total_radiator_oil,
+        )
+
+    if dry_type:
+        return _no_radiator_result()
+
+    if not radiator_selection_enabled or csp_only or pipes_only or csp_pipes:
+        return _no_radiator_result()
+
+    if csp_radiator:
+        csp_heat = _get_csp_heat(tank_length, tank_width, tank_height)
+        new_tank_height = tank_height * 1.55
+
+    extralong = 0
+    temp_dependence_factor = _get_temp_dependence_factor(temp_wdg, temp_top)
+    radiator_length = _get_radiator_length(tank_height, core_dia)
+    radiator_area = (total_loss - tank_dissipation - csp_heat) / temp_dependence_factor
+
+    if radiator_area <= 0:
+        return _no_radiator_result()
+
+    max_sections = _get_max_sections(kva)
+    max_sections_per_radiator = _get_max_sections_per_radiator(kva)
+    radiator_width = _get_default_radiator_width(kva)
+    max_radiator_banks = _get_max_radiator_banks(tank_length, radiator_width, terminal_lv, terminal_hv)
+
+    if user_rad_width not in (None, 0):
+        radiator_width = user_rad_width
+        extralong = -1
+
+    while True:
+        radiator_banks = 2 if kva < 100 else 4
+
+        while True:
+            radiator_sections = _get_radiator_sections(
+                radiator_area,
+                radiator_length,
+                radiator_width,
+                radiator_banks,
+            )
+            if radiator_sections > max_sections_per_radiator:
+                radiator_banks += 2
+                if radiator_banks > max_radiator_banks:
+                    radiator_banks -= 2
+                    break
+                continue
+            break
+
+        if extralong < 0:
+            break
+
+        if radiator_sections <= max_sections_per_radiator:
+            break
+
+        if radiator_width < 300:
+            radiator_width = 300
+            continue
+        if radiator_width < 520:
+            radiator_width = 520
+            continue
+        if extralong == 0:
+            extralong = 1
+            max_radiator_banks += 2
+            continue
+
+        extralong = 2
+        radiator_length += 300
+
+    selection_text = f"{radiator_length} x {radiator_width} - {radiator_sections} x {radiator_banks}"
+    if extralong >= 1:
+        selection_text = f"{selection_text}++"
+    if extralong == 2:
+        selection_text = f"++{selection_text}"
+
+    radiator_weight, radiator_oil = _get_radiator_section_weight_and_oil(
+        radiator_length,
+        radiator_width,
+    )
+
+    total_radiator_weight = int(radiator_weight * radiator_banks * radiator_sections)
+    total_radiator_oil = int(radiator_oil * radiator_banks * radiator_sections)
+
+    return _build_result(
+        selectionText=selection_text,
+        radiatorLength=radiator_length,
+        radiatorWidth=radiator_width,
+        radiatorSections=radiator_sections,
+        radiatorBanks=radiator_banks,
+        radiatorArea=two_digit_decimal(radiator_area),
+        temperatureDependenceFactor=temp_dependence_factor,
+        cspHeat=csp_heat,
+        newTankHeight=new_tank_height,
+        totalRadiatorWeight=total_radiator_weight,
+        totalRadiatorOil=total_radiator_oil,
+        extendedLayout=extralong >= 1,
+        maxSections=max_sections,
+        maxSectionsPerRadiator=max_sections_per_radiator,
+    )
+
+
 def get_conservator_oil(oil_in_tank, oil_in_radiators):
     return next_integer((oil_in_radiators + oil_in_tank) * 0.04)
 
