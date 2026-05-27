@@ -53,6 +53,7 @@ from api.services.windingFormulae import (
     get_r75,
     get_revised_conductor_cross_section,
     get_round_cond_dia,
+    get_specific_loss,
     get_stray_loss,
     get_stray_loss_for_disc,
     get_stray_loss_for_x_over,
@@ -384,7 +385,12 @@ def calculate_hv_windings(multi_winding, lv_results):
     hv_hv_gap = center_distance - hv_od
     core_length = get_core_length(lv_results["coreDiameter"], lv_results["windowHeight"], center_distance)
     core_weight = get_core_weight(core_length, lv_results["netArea"])
-    specific_loss = 0.0
+    specific_loss = get_specific_loss(
+        getattr(getattr(multi_winding, "core", None), "coreMaterial", None),
+        multi_winding.fluxDensity,
+        multi_winding.frequency,
+        getattr(getattr(multi_winding, "core", None), "wKgGrade", None),
+    )
     core_loss = get_core_loss(core_weight, getattr(multi_winding, "buildFactor", 1.25), specific_loss)
     tank_loss = get_tank_loss(multi_winding.kVA, lv_results["lvCurrentPerPhase"], multi_winding.lowVoltage, None, dry_type)
     total_load_loss = next_integer(lv_results["lvLoadLoss"] + load_loss_normal + tank_loss)
@@ -456,6 +462,7 @@ def calculate_hv_windings(multi_winding, lv_results):
         "centerDistance": center_distance,
         "coreLength": core_length,
         "coreWeight": core_weight,
+        "wKgGrade": specific_loss,
         "coreLoss": core_loss,
         "tankLoss": tank_loss,
         "totalLoadLoss": total_load_loss,

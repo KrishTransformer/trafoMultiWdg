@@ -46,6 +46,7 @@ from api.services.windingFormulae import (
     get_low_voltage,
     get_lv_hv_ins,
     get_nl_current_percentage,
+    get_specific_loss,
     get_tank_loss,
     get_test_and_imp_test,
     get_vector_group,
@@ -879,7 +880,7 @@ def _apply_defaults(multi_winding):
     )
     multi_winding.buildFactor = get_build_factor(
         multi_winding.kVA,
-        getattr(_default_core(multi_winding), "coreType", None) or get_core_type(None),
+        get_core_type(getattr(_default_core(multi_winding), "coreType", None)),
         getattr(multi_winding, "buildFactor", None),
     )
     _default_core(multi_winding).coreMaterial = get_core_material(getattr(_default_core(multi_winding), "coreMaterial", None))
@@ -1088,8 +1089,7 @@ def _with_named_volts_per_phase(payload, voltage_field_name, voltage_value):
 
 
 def _build_impedance_response(impedance_summary):
-    breakdown = dict(impedance_summary.get("breakdown", {}))
-    response = {
+    return {
         "h1": impedance_summary.get("h1", 0.0),
         "h2": impedance_summary.get("h2", 0.0),
         "ls": impedance_summary.get("ls", 0.0),
@@ -1103,8 +1103,6 @@ def _build_impedance_response(impedance_summary):
         "er": impedance_summary.get("er", 0.0),
         "ek": impedance_summary.get("ek", 0.0),
     }
-    response.update(breakdown)
-    return response
 
 
 def calculate_circ_wdg(multi_winding):
@@ -1237,10 +1235,20 @@ def calculate_circ_wdg(multi_winding):
     core.area = lv_results["netArea"]
     core.cenDist = coil_dimension_scale["centerDistance"]
     core.fluxDensity = lv_results["revisedFluxDensity"]
+    core.wKgGrade = get_specific_loss(
+        core.coreMaterial,
+        multi_winding.fluxDensity,
+        multi_winding.frequency,
+        getattr(core, "wKgGrade", None),
+    )
     recomputed_center_distance = get_center_distance(coil_dimension_scale["outermostOD"], raw_hv_results["hvHvGap"])
     recomputed_core_length = get_core_length(lv_results["coreDiameter"], lv_results["windowHeight"], recomputed_center_distance)
     recomputed_core_weight = get_core_weight(recomputed_core_length, lv_results["netArea"])
-    recomputed_core_loss = get_core_loss(recomputed_core_weight, getattr(multi_winding, "buildFactor", 1.25), 0.0)
+    recomputed_core_loss = get_core_loss(
+        recomputed_core_weight,
+        getattr(multi_winding, "buildFactor", 1.25),
+        core.wKgGrade,
+    )
     recomputed_tank_loss = get_tank_loss(multi_winding.kVA, lv_results["lvCurrentPerPhase"], multi_winding.lowVoltage, None, bool(getattr(multi_winding, "dryType", False)))
     core.coreWeight = recomputed_core_weight
     core.coreType = get_core_type(core.coreType)
@@ -1255,6 +1263,7 @@ def calculate_circ_wdg(multi_winding):
         "buildFactor": multi_winding.buildFactor,
         "fluxDensity": multi_winding.fluxDensity,
         "coreMaterial": core.coreMaterial,
+        "wKgGrade": core.wKgGrade,
         "lowVoltage": multi_winding.lowVoltage,
         "highVoltage": multi_winding.highVoltage,
         "vectorGroup": multi_winding.vectorGroup,
@@ -1274,7 +1283,6 @@ def calculate_circ_wdg(multi_winding):
         "ex": impedance_summary["ex"],
         "er": er_value,
         "ek": ek_value,
-        "impedanceBreakdown": impedance_summary["breakdown"],
     }
 
     # kW55 is temporarily disabled while we validate the remaining multi-winding flow.
@@ -1360,6 +1368,7 @@ def calculate_circ_wdg(multi_winding):
                 "area": core.area,
                 "cenDist": core.cenDist,
                 "fluxDensity": core.fluxDensity,
+                "wKgGrade": core.wKgGrade,
                 "coreWeight": core.coreWeight,
                 "coreType": core.coreType,
                 "coreMaterial": core.coreMaterial,

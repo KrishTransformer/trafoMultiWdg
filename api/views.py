@@ -9,6 +9,15 @@ from api.models import CoilDimensions, Core, MultiWindings, RadialGaps, Windings
 from api.services.circWdgService import calculate_circ_wdg
 
 
+RADIAL_GAP_FIELDS_BY_SELECTION = {
+    "2_WDG": ("coreToLv", "LvtoHV"),
+    "3_WDG": ("coreToLv", "LvtoHV", "lvToOuter"),
+    "4_WDG_C": ("coreToLv", "LvtoHV", "lvToCoarse", "coarseToOuter"),
+    "4_WDG_F": ("coreToLv", "LvtoHV", "lvToFine", "fineToOuter"),
+    "5_WDG": ("coreToLv", "LvtoHV", "lvToCoarse", "fineToCoarse", "fineToOuter"),
+}
+
+
 def _build_model_instance(model_class, payload):
     if not isinstance(payload, dict):
         return None
@@ -32,9 +41,21 @@ def _serialize_model(instance):
     return model_to_dict(instance, fields=[field.name for field in instance._meta.fields if field.name != "id"])
 
 
+def _serialize_radial_gaps(instance, selected_code):
+    serialized = _serialize_model(instance)
+    if serialized is None:
+        return None
+
+    allowed_fields = RADIAL_GAP_FIELDS_BY_SELECTION.get(selected_code)
+    if not allowed_fields:
+        return serialized
+    return {field: serialized[field] for field in allowed_fields if field in serialized}
+
+
 def _serialize_formula_payload(payload):
     inputs = payload.get("inputs", {})
     winding_models = inputs.get("windingModels", {})
+    selected_code = payload.get("selectedCode")
 
     serialized_inputs = {
         **inputs,
@@ -42,7 +63,7 @@ def _serialize_formula_payload(payload):
             name: _serialize_model(model)
             for name, model in winding_models.items()
         },
-        "radialGaps": _serialize_model(inputs.get("radialGaps")),
+        "radialGaps": _serialize_radial_gaps(inputs.get("radialGaps"), selected_code),
         "core": _serialize_model(inputs.get("core")),
         "coilDimensions": _serialize_model(inputs.get("coilDimensions")),
     }

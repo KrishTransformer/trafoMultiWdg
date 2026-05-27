@@ -1,4 +1,7 @@
+import csv
 import math
+from functools import lru_cache
+from pathlib import Path
 
 from api.services.numberUtils import (
     four_digit_decimal,
@@ -102,11 +105,83 @@ def get_flux_density(flux_density, dry_type):
 
 
 def get_core_material(core_material):
-    return core_material if core_material is not None else "NipM4"
+    return core_material if _normalize_name(core_material) else "NipM4"
+
+
+@lru_cache(maxsize=1)
+def _load_core_material_specific_loss_table():
+    csv_path = Path(__file__).resolve().parents[1] / "data" / "CoreMaterialsMulti.csv"
+    material_table = {}
+
+    with csv_path.open(newline="", encoding="utf-8") as csv_file:
+        rows = csv.reader(csv_file)
+        header = next(rows, [])
+        flux_density_points = []
+        for value in header[1:-1]:
+            try:
+                flux_density_points.append(float(value))
+            except (TypeError, ValueError):
+                flux_density_points.append(None)
+
+        for row in rows:
+            if not row:
+                continue
+            material_name = row[0].strip()
+            if not material_name:
+                continue
+
+            specific_losses = {}
+            for flux_density, loss_value in zip(flux_density_points, row[1:-1]):
+                if flux_density is None:
+                    continue
+                try:
+                    specific_losses[flux_density] = float(loss_value)
+                except (TypeError, ValueError):
+                    continue
+
+            if specific_losses:
+                material_table[material_name] = specific_losses
+
+    return material_table
+
+
+def get_specific_loss(core_material, flux_density, frequency, w_kg_grade=None):
+    if w_kg_grade not in (None, 0, 0.0):
+        return two_digit_decimal(w_kg_grade)
+
+    specific_loss_map = _load_core_material_specific_loss_table().get(get_core_material(core_material))
+    if not specific_loss_map:
+        return 0.0
+
+    lower_flux_density = one_digit_decimal_floor(flux_density - 0.01)
+    upper_flux_density = one_digit_decimal(flux_density)
+    lower_specific_loss = specific_loss_map.get(lower_flux_density)
+    upper_specific_loss = specific_loss_map.get(upper_flux_density)
+
+    if lower_specific_loss is None and upper_specific_loss is None:
+        return 0.0
+    if lower_specific_loss is None:
+        specific_loss = upper_specific_loss
+    elif upper_specific_loss is None or upper_flux_density == lower_flux_density:
+        specific_loss = lower_specific_loss
+    else:
+        specific_loss = interpolate_specific_loss(
+            flux_density,
+            lower_flux_density,
+            upper_flux_density,
+            lower_specific_loss,
+            upper_specific_loss,
+            frequency,
+        )
+        return specific_loss
+
+    if frequency == 60:
+        specific_loss *= 1.32
+    return two_digit_decimal(specific_loss)
 
 
 def get_core_type(core_type):
-    return core_type if core_type is not None else PRIME
+    return core_type if _normalize_name(core_type) and _normalize_name(core_type) != "0" else PRIME
 
 
 def get_low_voltage(low_voltage):
@@ -1231,7 +1306,7 @@ def get_winding_length_per_coil(winding_length, gap_bw_coil, no_of_coils):
     return int(math.floor((winding_length - (gap_bw_coil * (no_of_coils - 1))) / no_of_coils))
 
 
-def get_specific_loss(req_flux_den, lower_flux_den, upper_flux_den, lower_specific_loss, upper_specific_loss, frequency):
+def interpolate_specific_loss(req_flux_den, lower_flux_den, upper_flux_den, lower_specific_loss, upper_specific_loss, frequency):
     term1 = (req_flux_den - lower_flux_den) * (upper_specific_loss - lower_specific_loss)
     specific_loss = lower_specific_loss + (term1 / (upper_flux_den - lower_flux_den))
     if frequency == 60:

@@ -12,7 +12,7 @@ from api.services import (
     calculate_lv_windings,
     calculate_outer_windings,
 )
-from api.services.windingFormulae import select_radiators
+from api.services.windingFormulae import get_specific_loss, select_radiators
 
 
 class MultiWdgCalculatorEndpointTests(TestCase):
@@ -82,6 +82,13 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         self.assertEqual(response.json()["inputs"]["windingModels"]["hv"]["terminal"], 11000.0)
         self.assertEqual(response.json()["inputs"]["radialGaps"]["coreToLv"], 5)
         self.assertEqual(
+            response.json()["inputs"]["radialGaps"],
+            {"coreToLv": 5, "LvtoHV": 0.0},
+        )
+        self.assertEqual(response.json()["inputs"]["core"]["wKgGrade"], 1.3)
+        self.assertEqual(response.json()["results"]["core"]["wKgGrade"], 1.3)
+        self.assertGreater(response.json()["results"]["hvWinding"]["coreLoss"], 0)
+        self.assertEqual(
             response.json()["inputs"]["windingTypes"]["lv"],
             "LAYER_DISC",
         )
@@ -90,25 +97,9 @@ class MultiWdgCalculatorEndpointTests(TestCase):
             "XOVER",
         )
         self.assertNotIn("outer", response.json()["inputs"]["windingTypes"])
-        self.assertEqual(
-            len(response.json()["results"]["impedance"]["pairs"]),
-            1,
-        )
         self.assertIn("ex", response.json()["results"]["impedance"])
         self.assertIn("er", response.json()["results"]["impedance"])
         self.assertIn("ek", response.json()["results"]["impedance"])
-        self.assertEqual(
-            response.json()["results"]["impedance"]["method"],
-            "pairwise",
-        )
-        self.assertEqual(
-            response.json()["results"]["impedance"]["pairs"][0]["pair"],
-            "lv-hv",
-        )
-        self.assertEqual(
-            response.json()["results"]["common"]["ex"],
-            response.json()["results"]["impedance"]["totals"]["ex"],
-        )
         self.assertEqual(
             response.json()["results"]["impedance"]["ek"],
             response.json()["results"]["ez"]["value"],
@@ -231,14 +222,6 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         self.assertEqual(response.json()["selectedCode"], "5_WDG")
         self.assertNotIn("windingSelection", response.json()["inputs"])
         self.assertNotIn("windingSelection", response.json()["results"])
-        self.assertEqual(
-            response.json()["results"]["impedance"]["method"],
-            "vb_multi_wdg",
-        )
-        self.assertIn(
-            "vb",
-            response.json()["results"]["impedance"],
-        )
         self.assertIn("delta", response.json()["results"]["impedance"])
         self.assertIn("delta1", response.json()["results"]["impedance"])
         self.assertIn("ds", response.json()["results"]["impedance"])
@@ -266,6 +249,16 @@ class MultiWdgCalculatorEndpointTests(TestCase):
             response.json()["results"]["phaseVoltageDivision"]["outer"],
             int(response.json()["inputs"]["windingModels"]["outer"]["terminal"]),
         )
+        self.assertEqual(
+            response.json()["inputs"]["radialGaps"],
+            {
+                "coreToLv": 5,
+                "LvtoHV": 10,
+                "lvToCoarse": 8,
+                "fineToCoarse": 6,
+                "fineToOuter": 10,
+            },
+        )
 
     def test_multi_wdg_selection_preserves_canonical_winding_sequence(self):
         payload = {
@@ -285,10 +278,9 @@ class MultiWdgCalculatorEndpointTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["selectedCode"], "4_WDG_F")
-        self.assertEqual(
-            response.json()["results"]["impedance"]["activeWindingOrder"],
-            ["lv", "hv", "fine", "outer"],
-        )
+        self.assertIn("ex", response.json()["results"]["impedance"])
+        self.assertIn("er", response.json()["results"]["impedance"])
+        self.assertIn("ek", response.json()["results"]["impedance"])
 
     def test_multi_wdg_hv_main_layers_follow_calculated_turns(self):
         payload = {
@@ -323,6 +315,14 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["inputs"]["radialGaps"],
+            {
+                "coreToLv": 5,
+                "LvtoHV": 10,
+                "lvToOuter": 10,
+            },
+        )
         hv_model = response.json()["inputs"]["windingModels"]["hv"]
         hv_results = response.json()["results"]["hvWinding"]
         self.assertEqual(hv_model["turnsPerPhase"], 2465.0)
@@ -738,3 +738,12 @@ class RadiatorSelectionTests(TestCase):
         self.assertEqual(result["selectionText"], "38mm Pipes x 271.0 M ")
         self.assertEqual(result["pipeLength"], 271.0)
         self.assertEqual(result["radiatorSections"], 0)
+
+
+class CoreMaterialSpecificLossTests(TestCase):
+    def test_specific_loss_uses_core_material_csv_table(self):
+        self.assertEqual(get_specific_loss("NipM4", 1.7, 50), 1.3)
+        self.assertEqual(get_specific_loss("NipM4", 1.7, 60), 1.72)
+
+    def test_specific_loss_respects_explicit_wkg_grade(self):
+        self.assertEqual(get_specific_loss("NipM4", 1.7, 50, 2.22), 2.22)
