@@ -31,6 +31,14 @@ def _build_section_map(winding_data):
     }
 
 
+def _active_sections(winding_data):
+    return [
+        winding
+        for winding in winding_data
+        if _safe_float(winding.get("turnsPerPhase"), 0.0) > 0
+    ]
+
+
 def _vb_axial_length(section):
     turns_per_phase = _safe_float(section.get("turnsPerPhase"), 0.0)
     if turns_per_phase <= 0:
@@ -93,136 +101,107 @@ def calculate_vb_multi_impedance(multi_winding, winding_data, lv_results, hv_res
     sections = _build_section_map(winding_data)
     lv = sections.get("lv", {})
     hv = sections.get("hv", {})
-    corse = sections.get("corse", {})
-    fine = sections.get("fine", {})
-    outer = sections.get("outer", {})
+    active_sections = _active_sections(winding_data)
+    active_order = [winding["name"] for winding in active_sections]
+    winding_count = len(active_sections)
 
-    active_order = [winding["name"] for winding in winding_data]
-    winding_count = len(active_order)
-
-    lv_axial = _vb_axial_length(lv)
-    hv_axial = _vb_axial_length(hv)
-    corse_axial = _vb_axial_length(corse)
-    fine_axial = _vb_axial_length(fine)
-    outer_axial = _vb_axial_length(outer)
-
-    axial_cm = (lv_axial + hv_axial + corse_axial + fine_axial + outer_axial) / max(winding_count * 10, 10)
-    if winding_count <= 2:
-        radial_cm = (
-            _safe_float(hv.get("outerDiameter"), 0.0)
-            - _safe_float(lv.get("innerDiameter"), 0.0)
-            - (_safe_float(lv.get("condIns"), 0.0) - _safe_float(hv.get("condIns"), 0.0))
-        ) / 20
-    else:
-        radial_cm = (
-            _safe_float(hv.get("outerDiameter"), 0.0)
-            - _safe_float(lv.get("innerDiameter"), 0.0)
-            - (_safe_float(lv.get("condIns"), 0.0) - _safe_float(outer.get("condIns"), 0.0))
-        ) / 20
+    axial_cm = sum(_vb_axial_length(section) for section in active_sections) / max(winding_count * 10, 10)
+    innermost = active_sections[0] if active_sections else {}
+    outermost = active_sections[-1] if active_sections else {}
+    radial_cm = (
+        _safe_float(outermost.get("outerDiameter"), 0.0)
+        - _safe_float(innermost.get("innerDiameter"), 0.0)
+        - (_safe_float(innermost.get("condIns"), 0.0) - _safe_float(outermost.get("condIns"), 0.0))
+    ) / 20
 
     radial_cm = max(radial_cm, 0.001)
     power = math.pi * axial_cm / radial_cm if radial_cm else 0.0
     k_ratio = 1 - ((1 - math.exp(-power)) / power) if power else 1.0
     ls_ez = axial_cm / k_ratio if k_ratio else axial_cm
 
-    lv_ins_ht = _vb_insulated_height(lv)
-    hv_ins_ht = _vb_insulated_height(hv)
-    corse_ins_ht = _vb_insulated_height(corse) if _safe_float(corse.get("turnsPerPhase"), 0.0) > 0 else 0.0
-    fine_ins_ht = _vb_insulated_height(fine) if _safe_float(fine.get("turnsPerPhase"), 0.0) > 0 else 0.0
-    outer_ins_ht = _vb_insulated_height(outer) if _safe_float(outer.get("turnsPerPhase"), 0.0) > 0 else 0.0
+    insulated_heights = {
+        winding["name"]: _vb_insulated_height(winding)
+        for winding in active_sections
+    }
+    gap_terms = {}
+    diameter_terms = {}
+    for previous_section, current_section in zip(active_sections, active_sections[1:]):
+        current_name = current_section["name"]
+        gap_terms[current_name] = _vb_gap_cm(previous_section, current_section)
+        diameter_terms[current_name] = (
+            _safe_float(previous_section.get("outerDiameter"), 0.0)
+            + _safe_float(current_section.get("innerDiameter"), 0.0)
+        ) / 20
 
-    hv_gap_cm = _vb_gap_cm(lv, hv) if hv else 0.0
-    corse_gap_cm = _vb_gap_cm(hv, corse) if corse else 0.0
-    fine_gap_cm = _vb_gap_cm(corse, fine) if fine else 0.0
-    outer_gap_cm = _vb_gap_cm(fine, outer) if outer else 0.0
+    lv_ins_ht = insulated_heights.get("lv", 0.0)
+    hv_ins_ht = insulated_heights.get("hv", 0.0)
+    legacy_reference_section = active_sections[2] if len(active_sections) > 2 else hv
+    legacy_reference_name = legacy_reference_section.get("name")
+    legacy_gap_cm = gap_terms.get(legacy_reference_name, gap_terms.get("hv", 0.0))
+    legacy_ins_ht = insulated_heights.get(legacy_reference_name, hv_ins_ht)
 
-    hv_delta1_legacy = corse_gap_cm + ((corse_ins_ht + lv_ins_ht + hv_ins_ht) / 3)
+    hv_delta1_legacy = legacy_gap_cm + ((legacy_ins_ht + lv_ins_ht + hv_ins_ht) / 3)
     ds_corse_legacy = (
         (_safe_float(lv.get("outerDiameter"), 0.0) - _safe_float(lv.get("condIns"), 0.0)) / 10
-        + corse_gap_cm
-        + ((hv_ins_ht - corse_ins_ht - lv_ins_ht) / 3)
+        + legacy_gap_cm
+        + ((hv_ins_ht - legacy_ins_ht - lv_ins_ht) / 3)
     )
 
     ampere_turn_value = _safe_float(hv.get("phaseCurrent"), 0.0) * _safe_float(hv.get("turnsPerPhase"), 0.0)
     fac = 1.05 if _normalize_winding_type(lv.get("windingType")) == "HELICAL" and _normalize_winding_type(hv.get("windingType")) != "HELICAL" else 1.0
     old_ex = (1.24 * (ampere_turn_value * hv_delta1_legacy * ds_corse_legacy * math.pow(10, -3) * fac) / max(_safe_float(lv_results.get("revisedVoltsPerTurn"), 0.0), 0.001) / max(ls_ez, 0.001))
 
-    hv_turns = _safe_float(hv.get("turnsPerPhase"), 0.0)
-    corse_turns = _safe_float(corse.get("turnsPerPhase"), 0.0)
-    fine_turns = _safe_float(fine.get("turnsPerPhase"), 0.0)
-    outer_turns = _safe_float(outer.get("turnsPerPhase"), 0.0)
-    sigma_hv = max(hv_turns + corse_turns + fine_turns + outer_turns, 1.0)
-    sigma_corse = corse_turns + fine_turns + outer_turns
-    sigma_fine = fine_turns + outer_turns
-    sigma_outer = outer_turns
+    high_side_sections = active_sections[1:]
+    high_side_turns = {
+        section["name"]: _safe_float(section.get("turnsPerPhase"), 0.0)
+        for section in high_side_sections
+    }
+    sigma_hv = max(sum(high_side_turns.values()), 1.0)
+    cumulative_turns = 0.0
+    high_side_names = [section["name"] for section in high_side_sections]
+    tail_turns = {}
+    running_turns = 0.0
+    for section_name in reversed(high_side_names):
+        running_turns += high_side_turns.get(section_name, 0.0)
+        tail_turns[section_name] = running_turns
 
-    gamma_lv = 1.0
-    gamma_hv = _gamma(hv_turns, sigma_hv)
-    gamma_corse = _gamma(hv_turns + corse_turns, sigma_hv)
-    gamma_fine = _gamma(hv_turns + corse_turns + fine_turns, sigma_hv)
-    gamma_outer = _gamma(hv_turns + corse_turns + fine_turns + outer_turns, sigma_hv)
+    vb_terms = {}
+    for index, section in enumerate(active_sections):
+        section_name = section["name"]
+        turns = _safe_float(section.get("turnsPerPhase"), 0.0)
+        if index == 0:
+            gamma_value = 1.0
+            beta_value = 1.0
+            delta_value = 0.0
+            ddelta_value = 0.0
+        else:
+            cumulative_turns += turns
+            gamma_value = _gamma(cumulative_turns, sigma_hv)
+            beta_value = (tail_turns.get(section_name, 0.0) / sigma_hv) ** 2 if tail_turns.get(section_name, 0.0) > 0 else 0.0
+            delta_value = gap_terms.get(section_name, 0.0)
+            ddelta_value = diameter_terms.get(section_name, 0.0)
 
-    alpha_lv = _alpha(gamma_lv)
-    alpha_hv = _alpha(gamma_hv)
-    alpha_corse = _alpha(gamma_corse) if corse_turns > 1 else 0.0
-    alpha_fine = _alpha(gamma_fine) if fine_turns > 1 else 0.0
-    alpha_outer = _alpha(gamma_outer) if outer_turns > 1 else 0.0
+        alpha_value = _alpha(gamma_value) if index == 0 or turns > 1 else 0.0
+        br_value = (_safe_float(section.get("radialThickness"), 0.0) - _safe_float(section.get("condIns"), 0.0)) / 10 if index == 0 or turns > 1 else 0.0
+        d_value = _vb_mean_diameter_cm(section.get("innerDiameter"), section.get("outerDiameter")) if index == 0 or turns > 1 else 0.0
+        prod_beta_value = beta_value * delta_value * ddelta_value
+        prod_alpha_value = alpha_value * beta_value * br_value * d_value
+        vb_terms[section_name] = {
+            "gamma": gamma_value,
+            "alpha": alpha_value,
+            "beta": beta_value,
+            "delta": delta_value,
+            "br": br_value,
+            "ddelta": ddelta_value,
+            "d": d_value,
+            "prodBeta": prod_beta_value,
+            "prodAlpha": prod_alpha_value,
+        }
 
-    beta_lv = 1.0
-    beta_hv = (sigma_hv / sigma_hv) ** 2
-    beta_corse = (sigma_corse / sigma_hv) ** 2 if sigma_corse > 0 else 0.0
-    beta_fine = (sigma_fine / sigma_hv) ** 2 if sigma_fine > 0 else 0.0
-    beta_outer = (sigma_outer / sigma_hv) ** 2 if sigma_outer > 0 else 0.0
-
-    delta_lv = 0.0
-    delta_hv = hv_gap_cm
-    delta_corse = corse_gap_cm
-    delta_fine = fine_gap_cm
-    delta_outer = outer_gap_cm
-
-    br_lv = (_safe_float(lv.get("radialThickness"), 0.0) - _safe_float(lv.get("condIns"), 0.0)) / 10
-    br_hv = (_safe_float(hv.get("radialThickness"), 0.0) - _safe_float(hv.get("condIns"), 0.0)) / 10
-    br_corse = (_safe_float(corse.get("radialThickness"), 0.0) - _safe_float(corse.get("condIns"), 0.0)) / 10 if corse_turns > 1 else 0.0
-    br_fine = (_safe_float(fine.get("radialThickness"), 0.0) - _safe_float(fine.get("condIns"), 0.0)) / 10 if fine_turns > 1 else 0.0
-    br_outer = (_safe_float(outer.get("radialThickness"), 0.0) - _safe_float(outer.get("condIns"), 0.0)) / 10 if outer_turns > 1 else 0.0
-
-    ddelta_lv = 0.0
-    d_lv = _vb_mean_diameter_cm(lv.get("innerDiameter"), lv.get("outerDiameter"))
-    ddelta_hv = (_safe_float(lv.get("outerDiameter"), 0.0) + _safe_float(hv.get("innerDiameter"), 0.0)) / 20
-    d_hv = _vb_mean_diameter_cm(hv.get("innerDiameter"), hv.get("outerDiameter"))
-    ddelta_corse = (_safe_float(hv.get("outerDiameter"), 0.0) + _safe_float(corse.get("innerDiameter"), 0.0)) / 20 if corse_turns > 1 else 0.0
-    d_corse = _vb_mean_diameter_cm(corse.get("innerDiameter"), corse.get("outerDiameter")) if corse_turns > 1 else 0.0
-    ddelta_fine = (_safe_float(corse.get("outerDiameter"), 0.0) + _safe_float(fine.get("innerDiameter"), 0.0)) / 20 if fine_turns > 1 else 0.0
-    d_fine = _vb_mean_diameter_cm(fine.get("innerDiameter"), fine.get("outerDiameter")) if fine_turns > 1 else 0.0
-    ddelta_outer = (_safe_float(fine.get("outerDiameter"), 0.0) + _safe_float(outer.get("innerDiameter"), 0.0)) / 20 if outer_turns > 1 else 0.0
-    d_outer = _vb_mean_diameter_cm(outer.get("innerDiameter"), outer.get("outerDiameter")) if outer_turns > 1 else 0.0
-
-    prod_beta_lv = beta_lv * delta_lv * ddelta_lv
-    prod_alpha_lv = alpha_lv * beta_lv * br_lv * d_lv
-    prod_beta_hv = beta_hv * delta_hv * ddelta_hv
-    prod_alpha_hv = alpha_hv * beta_hv * br_hv * d_hv
-    prod_beta_corse = beta_corse * delta_corse * ddelta_corse
-    prod_alpha_corse = alpha_corse * beta_corse * br_corse * d_corse
-    prod_beta_fine = beta_fine * delta_fine * ddelta_fine
-    prod_alpha_fine = alpha_fine * beta_fine * br_fine * d_fine
-    prod_beta_outer = beta_outer * delta_outer * ddelta_outer
-    prod_alpha_outer = alpha_outer * beta_outer * br_outer * d_outer
-
-    delta_ds = (
-        prod_beta_lv
-        + prod_beta_hv
-        + prod_beta_corse
-        + prod_beta_fine
-        + prod_beta_outer
-        + prod_alpha_lv
-        + prod_alpha_hv
-        + prod_alpha_corse
-        + prod_alpha_fine
-        + alpha_outer
-    )
+    delta_ds = sum(term["prodBeta"] + term["prodAlpha"] for term in vb_terms.values())
 
     ex_value = two_digit_decimal((1.24 * (delta_ds * math.pow(10, -3)) * ampere_turn_value) / max(ls_ez, 0.001) / max(_safe_float(lv_results.get("revisedVoltsPerTurn"), 0.0), 0.001))
-    copper_loss = sum(_safe_float(winding.get("loadLoss"), 0.0) for winding in winding_data)
+    copper_loss = sum(_safe_float(winding.get("loadLoss"), 0.0) for winding in active_sections)
     er_value = two_digit_decimal((copper_loss / max(_safe_float(multi_winding.kVA, 0.0), 1.0)) / 10)
     ek_value = ek(er_value, ex_value)
 
@@ -261,8 +240,14 @@ def calculate_vb_multi_impedance(multi_winding, winding_data, lv_results, hv_res
                 "fac": fac,
                 "hvDelta1Legacy": two_digit_decimal(hv_delta1_legacy),
                 "dsCorseLegacy": two_digit_decimal(ds_corse_legacy),
-                "outerAlphaCompatibilityTerm": two_digit_decimal(alpha_outer),
-                "outerProdAlphaReference": two_digit_decimal(prod_alpha_outer),
+                "termOrder": active_order,
+                "termBreakdown": {
+                    section_name: {
+                        key: two_digit_decimal(value)
+                        for key, value in term.items()
+                    }
+                    for section_name, term in vb_terms.items()
+                },
             },
         },
     }

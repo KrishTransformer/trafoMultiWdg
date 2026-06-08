@@ -209,7 +209,7 @@ def _build_base_context(multi_winding, winding):
         multi_winding.kVA,
         multi_winding.highVoltage,
         vector_group,
-        getattr(getattr(multi_winding, "radialGaps", None), "LvtoHV", None),
+        getattr(getattr(multi_winding, "radialGaps", None), "lvToHv", None),
         dry_type,
     )
 

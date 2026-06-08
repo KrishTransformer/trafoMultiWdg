@@ -141,7 +141,7 @@ WINDING_TYPE_ALIASES = {
     "X-OVER": "XOVER",
 }
 COIL_SCALE_GAP_FIELDS = {
-    "3 Wdg (LV, HV-Main and Outer)": (("outer", "lvToOuter"),),
+    "3 Wdg (LV, HV-Main and Outer)": (("outer", "hvToOuter"),),
     "4 Wdg (LV, HV-Main, Corse and Outer)": (
         ("corse", "lvToCoarse"),
         ("outer", "coarseToOuter"),
@@ -155,6 +155,14 @@ COIL_SCALE_GAP_FIELDS = {
         ("fine", "fineToCoarse"),
         ("outer", "fineToOuter"),
     ),
+}
+GAP_INSULATION_CONNECTIONS = {
+    "hvToOuter": ("hv", "outer"),
+    "lvToCoarse": ("lv", "corse"),
+    "coarseToOuter": ("corse", "outer"),
+    "lvToFine": ("lv", "fine"),
+    "fineToCoarse": ("corse", "fine"),
+    "fineToOuter": ("fine", "outer"),
 }
 EXTRA_WINDING_SERVICE_MAP = {
     "corse": calculate_corse_windings,
@@ -308,7 +316,7 @@ def _build_coil_dimension_scale(
             "radialThickness": _round_dimension(hv_results["hvRadialThickness"] if "hvRadialThickness" in hv_results else hv_results["radialThickness"]),
             "outerDiameter": _round_dimension(hv_results["hvOd"] if "hvOd" in hv_results else hv_results["outerDiameter"]),
             "gapFromPrevious": safe_float(hv_results["lvHvGap"] if "lvHvGap" in hv_results else 0.0, 0.0),
-            "gapField": "LvtoHV",
+            "gapField": "lvToHv",
             "source": "calculated",
         },
     ]
@@ -566,7 +574,7 @@ def _build_hv_main_results(multi_winding, lv_results, hv_results, allocation):
         "previousOuterDiameter": safe_float(lv_results["lvOd"], 0.0),
         "previousRadialThickness": safe_float(lv_results["lvRadialThickness"], 0.0),
         "previousWindingLength": safe_float(hv_results["hvWindingLength"], 0.0),
-        "gapField": "LvtoHV",
+        "gapField": "lvToHv",
         "gapToPrevious": safe_float(hv_results["lvHvGap"], 0.0),
     }
     section_results = build_hv_section_results(
@@ -897,9 +905,7 @@ def _apply_defaults(multi_winding):
 
 
 def _parallel_label(radial_parallel, axial_parallel, total_conductors):
-    if total_conductors > 1:
-        return f"Rad {radial_parallel} X Axi {axial_parallel} = {total_conductors}"
-    return str(total_conductors)
+    return f"Rad {radial_parallel} X Axi {axial_parallel} = {total_conductors}"
 
 
 def _conductor_size_label(breadth, height, is_round):
@@ -1030,10 +1036,11 @@ def _apply_section_results_to_model(winding, section_results):
     winding.eddyStrayLoss = section_results.get("strayLoss", 0.0)
     winding.tempGradDegC = section_results.get("gradient", 0.0)
     winding.noOfDuctsWidth = f'{section_results.get("ducts", 0)} / {section_results.get("ductSize", 0)}'
-    winding.noInParallel = (
-        f'Seed {seed_dimensions.get("previousWinding", "").upper()} '
-        f'OD {seed_dimensions.get("previousOuterDiameter", 0.0)}'
-    ).strip()
+    winding.noInParallel = _parallel_label(
+        section_results.get("radialParallelCond"),
+        section_results.get("axialParallelCond"),
+        section_results.get("noOfConductors", 0),
+    )
     winding.turnsLayers = (
         f'{seed_dimensions.get("previousWinding", "").upper()} -> '
         f'{seed_dimensions.get("gapField", "")} -> '
@@ -1054,6 +1061,83 @@ def _build_phase_voltage_division(section_allocations):
         "corse": _vb_int((section_allocations.get("corse") or {}).get("voltsPerPhase", 0.0)),
         "fine": _vb_int((section_allocations.get("fine") or {}).get("voltsPerPhase", 0.0)),
         "outer": _vb_int((section_allocations.get("outer") or {}).get("voltsPerPhase", 0.0)),
+    }
+
+
+def _winding_type_name(multi_winding, winding_name):
+    attr_name = WINDING_TYPE_ATTRS[winding_name]
+    return getattr(multi_winding, attr_name, WINDING_TYPE_DEFAULTS[winding_name])
+
+
+def _gap_insulation_label(multi_winding, inner_winding, outer_winding, gap_value):
+    inner_type = _winding_type_name(multi_winding, inner_winding)
+    outer_type = _winding_type_name(multi_winding, outer_winding)
+    if inner_winding == "lv":
+        return get_lv_hv_ins(inner_type, outer_type, gap_value)
+    return get_hv_hv_ins(inner_type, outer_type, gap_value)
+
+
+def _build_insulation_payload(multi_winding, coil_dimensions):
+    outermost_winding_name = coil_dimensions.outermostWinding or "hv"
+    outermost_winding_type = _winding_type_name(multi_winding, outermost_winding_name)
+    insulation = {
+        "coreLv": get_core_lv_ins(multi_winding.lvWindingType, coil_dimensions.coreGap or 0),
+        "lvHv": get_lv_hv_ins(
+            multi_winding.lvWindingType,
+            multi_winding.hvWindingType,
+            coil_dimensions.lVHVGap or 0,
+        ),
+        "coilCoil": get_hv_hv_ins(
+            outermost_winding_type,
+            outermost_winding_type,
+            coil_dimensions.coilCoilGap or coil_dimensions.hVHVGap or 0,
+        ),
+    }
+
+    winding_dimensions = {
+        "corse": {
+            "gap": coil_dimensions.corseGap,
+        },
+        "fine": {
+            "gap": coil_dimensions.fineGap,
+        },
+        "outer": {
+            "gap": coil_dimensions.outerGap,
+        },
+    }
+
+    for winding_name, gap_field in COIL_SCALE_GAP_FIELDS.get(multi_winding.windings, ()):
+        connection = GAP_INSULATION_CONNECTIONS.get(gap_field)
+        if not connection:
+            continue
+        gap_value = (winding_dimensions.get(winding_name) or {}).get("gap")
+        insulation[gap_field] = _gap_insulation_label(
+            multi_winding,
+            connection[0],
+            connection[1],
+            gap_value or 0,
+        )
+
+    return insulation
+
+
+def _build_test_voltage_entry(voltage):
+    test_voltage, impulse_voltage = get_test_and_imp_test(safe_float(voltage, 0.0))
+    return {
+        "test": test_voltage,
+        "impulse": impulse_voltage,
+    }
+
+
+def _build_test_voltages_payload(
+    multi_winding,
+    corse_winding_model,
+    fine_winding_model,
+    outer_winding_model,
+):
+    return {
+        "lv": _build_test_voltage_entry(multi_winding.lowVoltage),
+        "hv": _build_test_voltage_entry(multi_winding.highVoltage),
     }
 
 
@@ -1213,6 +1297,7 @@ def calculate_circ_wdg(multi_winding):
     coil_dimensions.hVRadial = hv_results_for_calc["radialThickness"] if "radialThickness" in hv_results_for_calc else raw_hv_results["hvRadialThickness"]
     coil_dimensions.hVOD = hv_results_for_calc["outerDiameter"] if "outerDiameter" in hv_results_for_calc else raw_hv_results["hvOd"]
     coil_dimensions.hVHVGap = raw_hv_results["hvHvGap"]
+    coil_dimensions.coilCoilGap = raw_hv_results["hvHvGap"]
     coil_dimensions.corseID = (coil_dimension_scale["windingDimensions"]["corse"] or {}).get("innerDiameter")
     coil_dimensions.corseRadial = (coil_dimension_scale["windingDimensions"]["corse"] or {}).get("radialThickness")
     coil_dimensions.corseOD = (coil_dimension_scale["windingDimensions"]["corse"] or {}).get("outerDiameter")
@@ -1383,6 +1468,7 @@ def calculate_circ_wdg(multi_winding):
                 "hVID": coil_dimensions.hVID,
                 "hVRadial": coil_dimensions.hVRadial,
                 "hVOD": coil_dimensions.hVOD,
+                "coilCoilGap": coil_dimensions.coilCoilGap,
                 "hVHVGap": coil_dimensions.hVHVGap,
                 "corseID": coil_dimensions.corseID,
                 "corseRadial": coil_dimensions.corseRadial,
@@ -1420,21 +1506,13 @@ def calculate_circ_wdg(multi_winding):
                 "voltageRegulation100": get_voltage_regulation(er_value, impedance_summary["ex"], 1.0),
                 "voltageRegulation80": get_voltage_regulation(er_value, impedance_summary["ex"], 0.8),
             },
-            "testVoltages": {
-                "lv": {
-                    "test": get_test_and_imp_test(multi_winding.lowVoltage)[0],
-                    "impulse": get_test_and_imp_test(multi_winding.lowVoltage)[1],
-                },
-                "hv": {
-                    "test": get_test_and_imp_test(multi_winding.highVoltage)[0],
-                    "impulse": get_test_and_imp_test(multi_winding.highVoltage)[1],
-                },
-            },
-            "insulation": {
-                "coreLv": get_core_lv_ins(multi_winding.lvWindingType, coil_dimensions.coreGap or 0),
-                "lvHv": get_lv_hv_ins(multi_winding.lvWindingType, multi_winding.hvWindingType, coil_dimensions.lVHVGap or 0),
-                "hvHv": get_hv_hv_ins(multi_winding.lvWindingType, multi_winding.hvWindingType, coil_dimensions.hVHVGap or 0),
-            },
+            "testVoltages": _build_test_voltages_payload(
+                multi_winding,
+                corse_winding_model,
+                fine_winding_model,
+                outer_winding_model,
+            ),
+            "insulation": _build_insulation_payload(multi_winding, coil_dimensions),
             "lossesAt50Percent": losses_at_50,
             "lossesAt100Percent": losses_at_100,
             "nlCurrentPercentage": get_nl_current_percentage(core.coreWeight, recomputed_core_loss, multi_winding.kVA) if multi_winding.kVA else 0,

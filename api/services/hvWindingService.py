@@ -373,12 +373,17 @@ def calculate_hv_windings(multi_winding, lv_results):
     tap_voltages = get_tap_voltages(multi_winding.highVoltage, tap_negative, tap_positive, tap_step_percent)
     tap_current = get_tap_currents(no_of_steps, tap_voltages, multi_winding.kVA)
 
+    coil_dimensions = getattr(multi_winding, "coilDimensions", None)
+    coil_coil_gap = getattr(coil_dimensions, "coilCoilGap", None)
+    if coil_coil_gap is None:
+        coil_coil_gap = getattr(coil_dimensions, "hVHVGap", None)
+
     hv_hv_gap = get_hv_hv_gap(
         multi_winding.kVA,
         multi_winding.lowVoltage,
         multi_winding.highVoltage,
         vector_group,
-        None,
+        coil_coil_gap,
         dry_type,
     )
     center_distance = get_center_distance(hv_od, hv_hv_gap)

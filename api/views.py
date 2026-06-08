@@ -10,11 +10,11 @@ from api.services.circWdgService import calculate_circ_wdg
 
 
 RADIAL_GAP_FIELDS_BY_SELECTION = {
-    "2_WDG": ("coreToLv", "LvtoHV"),
-    "3_WDG": ("coreToLv", "LvtoHV", "lvToOuter"),
-    "4_WDG_C": ("coreToLv", "LvtoHV", "lvToCoarse", "coarseToOuter"),
-    "4_WDG_F": ("coreToLv", "LvtoHV", "lvToFine", "fineToOuter"),
-    "5_WDG": ("coreToLv", "LvtoHV", "lvToCoarse", "fineToCoarse", "fineToOuter"),
+    "2_WDG": ("coreToLv", "lvToHv"),
+    "3_WDG": ("coreToLv", "lvToHv", "hvToOuter"),
+    "4_WDG_C": ("coreToLv", "lvToHv", "lvToCoarse", "coarseToOuter"),
+    "4_WDG_F": ("coreToLv", "lvToHv", "lvToFine", "fineToOuter"),
+    "5_WDG": ("coreToLv", "lvToHv", "lvToCoarse", "fineToCoarse", "fineToOuter"),
 }
 
 
@@ -33,6 +33,28 @@ def _build_model_instance(model_class, payload):
         if key in field_names
     }
     return model_class(**filtered_payload)
+
+
+def _normalize_coil_dimensions_payload(payload):
+    if not isinstance(payload, dict):
+        return payload
+
+    normalized_payload = dict(payload)
+    if "coilCoilGap" not in normalized_payload and "hVHVGap" in normalized_payload:
+        normalized_payload["coilCoilGap"] = normalized_payload["hVHVGap"]
+    if "hVHVGap" not in normalized_payload and "coilCoilGap" in normalized_payload:
+        normalized_payload["hVHVGap"] = normalized_payload["coilCoilGap"]
+    return normalized_payload
+
+
+def _normalize_radial_gaps_payload(payload):
+    if not isinstance(payload, dict):
+        return payload
+
+    normalized_payload = dict(payload)
+    if "lvToHv" not in normalized_payload and "LvtoHV" in normalized_payload:
+        normalized_payload["lvToHv"] = normalized_payload["LvtoHV"]
+    return normalized_payload
 
 
 def _serialize_model(instance):
@@ -87,9 +109,15 @@ def _build_multi_winding(payload):
     multi_winding.fineWindings = _build_model_instance(Windings, payload.get("fineWindings"))
     multi_winding.corseWindings = _build_model_instance(Windings, payload.get("corseWindings"))
     multi_winding.outerWindings = _build_model_instance(Windings, payload.get("outerWindings"))
-    multi_winding.radialGaps = _build_model_instance(RadialGaps, payload.get("radialGaps"))
+    multi_winding.radialGaps = _build_model_instance(
+        RadialGaps,
+        _normalize_radial_gaps_payload(payload.get("radialGaps")),
+    )
     multi_winding.core = _build_model_instance(Core, payload.get("core"))
-    multi_winding.coilDimensions = _build_model_instance(CoilDimensions, payload.get("coilDimensions"))
+    multi_winding.coilDimensions = _build_model_instance(
+        CoilDimensions,
+        _normalize_coil_dimensions_payload(payload.get("coilDimensions")),
+    )
 
     for key in [
         "dryType",

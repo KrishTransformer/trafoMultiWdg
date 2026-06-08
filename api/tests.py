@@ -1,10 +1,11 @@
 import json
+from types import SimpleNamespace
 
 from django.test import Client, TestCase
 
-from api.formulae import calculate_winding_formulae
 from api.models import MultiWindings, Windings
 from api.services import (
+    calculate_winding_formulae,
     calculate_circ_wdg,
     calculate_corse_windings,
     calculate_fine_windings,
@@ -12,6 +13,7 @@ from api.services import (
     calculate_lv_windings,
     calculate_outer_windings,
 )
+from api.services.impedanceVbService import calculate_vb_multi_impedance
 from api.services.windingFormulae import get_specific_loss, select_radiators
 
 
@@ -78,12 +80,20 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         self.assertEqual(response.json()["inputs"]["windingModels"]["lv"]["phaseCurrent"], 133.34)
         self.assertEqual(response.json()["inputs"]["windingModels"]["lv"]["endClearances"], 46)
         self.assertEqual(response.json()["inputs"]["windingModels"]["lv"]["terminal"], 249.99)
+        self.assertEqual(
+            response.json()["inputs"]["windingModels"]["lv"]["noInParallel"],
+            "Rad 1 X Axi 1 = 1",
+        )
         self.assertEqual(response.json()["inputs"]["windingModels"]["hv"]["turnsPerPhase"], 2465)
         self.assertEqual(response.json()["inputs"]["windingModels"]["hv"]["terminal"], 11000.0)
+        self.assertEqual(
+            response.json()["inputs"]["windingModels"]["hv"]["noInParallel"],
+            "Rad 1 X Axi 1 = 1",
+        )
         self.assertEqual(response.json()["inputs"]["radialGaps"]["coreToLv"], 5)
         self.assertEqual(
             response.json()["inputs"]["radialGaps"],
-            {"coreToLv": 5, "LvtoHV": 0.0},
+            {"coreToLv": 5, "lvToHv": 0.0},
         )
         self.assertEqual(response.json()["inputs"]["core"]["wKgGrade"], 1.3)
         self.assertEqual(response.json()["results"]["core"]["wKgGrade"], 1.3)
@@ -111,6 +121,13 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         self.assertEqual(
             response.json()["results"]["phaseVoltageDivision"],
             {"lv": 249, "hvMain": 11000, "corse": 0, "fine": 0, "outer": 0},
+        )
+        self.assertEqual(
+            response.json()["results"]["testVoltages"],
+            {
+                "lv": {"test": 3, "impulse": 0},
+                "hv": {"test": 28, "impulse": 75},
+            },
         )
         self.assertEqual(
             response.json()["results"]["coilDimensions"]["windingDimensions"]["lv"]["innerDiameter"],
@@ -148,6 +165,217 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         self.assertEqual(
             response.json()["inputs"]["windingTypes"],
             {"lv": "HELICAL", "hv": "HELICAL"},
+        )
+
+    def test_two_wdg_coil_dimensions_accepts_preferred_coil_coil_gap_name(self):
+        payload = {
+            "kVA": 100,
+            "kValue": 0.45,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 433,
+            "highVoltage": 11000,
+            "coilDimensions": {
+                "coilCoilGap": 30,
+            },
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["inputs"]["coilDimensions"]["coilCoilGap"], 30.0)
+        self.assertEqual(response.json()["inputs"]["coilDimensions"]["hVHVGap"], 30.0)
+        self.assertEqual(response.json()["results"]["coilDimensions"]["coilCoilGap"], 30)
+        self.assertEqual(response.json()["results"]["coilDimensions"]["hVHVGap"], 30)
+
+    def test_radial_gaps_accept_legacy_lvtohv_input_but_return_lv_to_hv(self):
+        payload = {
+            "kVA": 100,
+            "kValue": 0.45,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 433,
+            "highVoltage": 11000,
+            "radialGaps": {
+                "coreToLv": 5,
+                "LvtoHV": 12,
+            },
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["inputs"]["radialGaps"],
+            {"coreToLv": 5, "lvToHv": 12},
+        )
+
+    def test_insulation_uses_coil_coil_name_instead_of_hv_hv(self):
+        payload = {
+            "kVA": 100,
+            "kValue": 0.45,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 433,
+            "highVoltage": 11000,
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        insulation = response.json()["results"]["insulation"]
+        self.assertIn("coreLv", insulation)
+        self.assertIn("lvHv", insulation)
+        self.assertIn("coilCoil", insulation)
+        self.assertNotIn("hvHv", insulation)
+
+    def test_coil_coil_insulation_uses_actual_outermost_winding_type(self):
+        payload = {
+            "windingSelection": "3 Wdg (LV, HV-Main and Outer)",
+            "kVA": 100,
+            "kValue": 0.45,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 433,
+            "highVoltage": 11000,
+            "hvWindingType": "Disc",
+            "outerWindingType": "Helical",
+            "radialGaps": {
+                "coreToLv": 5,
+                "lvToHv": 10,
+                "hvToOuter": 10,
+            },
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["results"]["insulation"]["coilCoil"],
+            "1mm x 2 PB + rest Oil",
+        )
+
+    def test_insulation_includes_active_extra_winding_gap_keys(self):
+        payload = {
+            "windingSelection": "5 Wdg (LV, HV-Main, Corse, Fine and Outer)",
+            "kVA": 100,
+            "kValue": 0.45,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 433,
+            "highVoltage": 11000,
+            "corseWindingType": "Helical",
+            "fineWindingType": "Helical",
+            "outerWindingType": "Helical",
+            "radialGaps": {
+                "coreToLv": 5,
+                "lvToHv": 10,
+                "lvToCoarse": 8,
+                "fineToCoarse": 6,
+                "fineToOuter": 10,
+            },
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        insulation = response.json()["results"]["insulation"]
+        self.assertIn("coilCoil", insulation)
+        self.assertIn("lvToCoarse", insulation)
+        self.assertIn("fineToCoarse", insulation)
+        self.assertIn("fineToOuter", insulation)
+        self.assertNotIn("hvHv", insulation)
+
+    def test_extra_winding_current_density_inputs_affect_section_sizing(self):
+        base_payload = {
+            "windingSelection": "5 Wdg (LV, HV-Main, Corse, Fine and Outer)",
+            "kVA": 100,
+            "kValue": 0.45,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 433,
+            "highVoltage": 11000,
+            "corseWindingType": "Helical",
+            "fineWindingType": "Helical",
+            "outerWindingType": "Helical",
+            "radialGaps": {
+                "coreToLv": 5,
+                "lvToHv": 10,
+                "lvToCoarse": 8,
+                "fineToCoarse": 6,
+                "fineToOuter": 10,
+            },
+        }
+
+        default_response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(base_payload),
+            content_type="application/json",
+        )
+        tuned_payload = {
+            **base_payload,
+            "corseCurrentDensity": 1.2,
+        }
+        tuned_response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(tuned_payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(default_response.status_code, 200)
+        self.assertEqual(tuned_response.status_code, 200)
+        default_corse = default_response.json()["inputs"]["windingModels"]["corse"]
+        tuned_corse = tuned_response.json()["inputs"]["windingModels"]["corse"]
+        self.assertNotEqual(default_corse["condCrossSec"], tuned_corse["condCrossSec"])
+
+    def test_test_voltages_remain_lv_and_hv_only(self):
+        payload = {
+            "windingSelection": "5 Wdg (LV, HV-Main, Corse, Fine and Outer)",
+            "kVA": 100,
+            "kValue": 0.45,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 433,
+            "highVoltage": 11000,
+            "corseWindingType": "Helical",
+            "fineWindingType": "Helical",
+            "outerWindingType": "Helical",
+            "radialGaps": {
+                "coreToLv": 5,
+                "lvToHv": 10,
+                "lvToCoarse": 8,
+                "fineToCoarse": 6,
+                "fineToOuter": 10,
+            },
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        test_voltages = response.json()["results"]["testVoltages"]
+        self.assertEqual(
+            test_voltages,
+            {
+                "lv": {"test": 3, "impulse": 0},
+                "hv": {"test": 28, "impulse": 75},
+            },
         )
 
     def test_multi_wdg_calculator_activates_selected_extra_windings(self):
@@ -205,7 +433,7 @@ class MultiWdgCalculatorEndpointTests(TestCase):
             },
             "radialGaps": {
                 "coreToLv": 5,
-                "LvtoHV": 10,
+                "lvToHv": 10,
                 "lvToCoarse": 8,
                 "fineToCoarse": 6,
                 "fineToOuter": 10
@@ -253,7 +481,7 @@ class MultiWdgCalculatorEndpointTests(TestCase):
             response.json()["inputs"]["radialGaps"],
             {
                 "coreToLv": 5,
-                "LvtoHV": 10,
+                "lvToHv": 10,
                 "lvToCoarse": 8,
                 "fineToCoarse": 6,
                 "fineToOuter": 10,
@@ -303,8 +531,8 @@ class MultiWdgCalculatorEndpointTests(TestCase):
             },
             "radialGaps": {
                 "coreToLv": 5,
-                "LvtoHV": 10,
-                "lvToOuter": 10,
+                "lvToHv": 10,
+                "hvToOuter": 10,
             },
         }
 
@@ -319,8 +547,8 @@ class MultiWdgCalculatorEndpointTests(TestCase):
             response.json()["inputs"]["radialGaps"],
             {
                 "coreToLv": 5,
-                "LvtoHV": 10,
-                "lvToOuter": 10,
+                "lvToHv": 10,
+                "hvToOuter": 10,
             },
         )
         hv_model = response.json()["inputs"]["windingModels"]["hv"]
@@ -351,7 +579,7 @@ class MultiWdgCalculatorEndpointTests(TestCase):
             "outerWindingType": "Helical",
             "radialGaps": {
                 "coreToLv": 5,
-                "LvtoHV": 10,
+                "lvToHv": 10,
                 "lvToCoarse": 8,
                 "fineToCoarse": 6,
                 "fineToOuter": 10,
@@ -375,6 +603,49 @@ class MultiWdgCalculatorEndpointTests(TestCase):
             self.assertEqual(result["turnsPerLayer"], 204.0)
             self.assertEqual(result["noOfLayers"], 1.0)
             self.assertEqual(result["endClearance"], 49.0)
+
+    def test_multi_wdg_extra_windings_number_in_parallel_matches_lv_hv_format(self):
+        payload = {
+            "windingSelection": "5 Wdg (LV, HV-Main, Corse, Fine and Outer)",
+            "kVA": 100,
+            "kValue": 0.45,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 433,
+            "highVoltage": 11000,
+            "tapStepsPercentage": 2.5,
+            "tapStepPositive": 2,
+            "tapStepNegative": 2,
+            "hvWindingType": "Helical",
+            "corseWindingType": "Helical",
+            "fineWindingType": "Helical",
+            "outerWindingType": "Helical",
+            "radialGaps": {
+                "coreToLv": 5,
+                "lvToHv": 10,
+                "lvToCoarse": 8,
+                "fineToCoarse": 6,
+                "fineToOuter": 10,
+            },
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        for winding_name in ("corse", "fine", "outer"):
+            model = response.json()["inputs"]["windingModels"][winding_name]
+            self.assertEqual(
+                model["noInParallel"],
+                (
+                    f'Rad {model["radialParallelCond"]} '
+                    f'X Axi {model["axialParallelCond"]} = '
+                    f'{model["radialParallelCond"] * model["axialParallelCond"]}'
+                ),
+            )
+            self.assertNotIn("Seed", model["noInParallel"])
 
     def test_multi_wdg_calculator_rejects_invalid_winding_selection(self):
         payload = {
@@ -420,7 +691,7 @@ class MultiWdgCalculatorEndpointTests(TestCase):
 
         self.assertEqual(response.status_code, 405)
 
-    def test_formulae_module_reexports_calculator(self):
+    def test_services_module_reexports_calculator(self):
         multi_winding = MultiWindings(
             kVA=100,
             kValue=0.45,
@@ -738,6 +1009,222 @@ class RadiatorSelectionTests(TestCase):
         self.assertEqual(result["selectionText"], "38mm Pipes x 271.0 M ")
         self.assertEqual(result["pipeLength"], 271.0)
         self.assertEqual(result["radiatorSections"], 0)
+
+
+class VbMultiImpedanceTests(TestCase):
+    def test_vb_multi_impedance_uses_actual_outermost_winding_for_radial_span(self):
+        winding_data = [
+            {
+                "name": "lv",
+                "windingType": "HELICAL",
+                "turnsPerPhase": 10,
+                "phaseCurrent": 100,
+                "loadLoss": 0,
+                "condIns": 1,
+                "radialThickness": 11,
+                "innerDiameter": 100,
+                "outerDiameter": 120,
+                "breadth": 10,
+                "turnsPerLayer": 10,
+                "axialParallel": 1,
+                "windingLength": 100,
+                "endClearance": 0,
+                "ducts": 0,
+                "ductSize": 0,
+            },
+            {
+                "name": "hv",
+                "windingType": "HELICAL",
+                "turnsPerPhase": 40,
+                "phaseCurrent": 10,
+                "loadLoss": 0,
+                "condIns": 2,
+                "radialThickness": 12,
+                "innerDiameter": 140,
+                "outerDiameter": 160,
+                "breadth": 10,
+                "turnsPerLayer": 10,
+                "axialParallel": 1,
+                "windingLength": 100,
+                "endClearance": 0,
+                "gapFromPrevious": 10,
+                "ducts": 0,
+                "ductSize": 0,
+            },
+            {
+                "name": "outer",
+                "windingType": "HELICAL",
+                "turnsPerPhase": 20,
+                "phaseCurrent": 10,
+                "loadLoss": 0,
+                "condIns": 3,
+                "radialThickness": 13,
+                "innerDiameter": 200,
+                "outerDiameter": 220,
+                "breadth": 10,
+                "turnsPerLayer": 10,
+                "axialParallel": 1,
+                "windingLength": 100,
+                "endClearance": 0,
+                "gapFromPrevious": 20,
+                "ducts": 0,
+                "ductSize": 0,
+            },
+        ]
+
+        result = calculate_vb_multi_impedance(
+            SimpleNamespace(kVA=100),
+            winding_data,
+            {"revisedVoltsPerTurn": 4},
+            {},
+            {"breakdown": {"pairs": []}},
+        )
+
+        self.assertAlmostEqual(result["b"], 6.1, places=2)
+
+    def test_vb_multi_impedance_uses_actual_previous_winding_for_outer_gap_terms(self):
+        winding_data = [
+            {
+                "name": "lv",
+                "windingType": "HELICAL",
+                "turnsPerPhase": 10,
+                "phaseCurrent": 100,
+                "loadLoss": 0,
+                "condIns": 1,
+                "radialThickness": 11,
+                "innerDiameter": 100,
+                "outerDiameter": 120,
+                "breadth": 10,
+                "turnsPerLayer": 10,
+                "axialParallel": 1,
+                "windingLength": 100,
+                "endClearance": 0,
+                "ducts": 0,
+                "ductSize": 0,
+            },
+            {
+                "name": "hv",
+                "windingType": "HELICAL",
+                "turnsPerPhase": 40,
+                "phaseCurrent": 10,
+                "loadLoss": 0,
+                "condIns": 2,
+                "radialThickness": 12,
+                "innerDiameter": 140,
+                "outerDiameter": 160,
+                "breadth": 10,
+                "turnsPerLayer": 10,
+                "axialParallel": 1,
+                "windingLength": 100,
+                "endClearance": 0,
+                "gapFromPrevious": 10,
+                "ducts": 0,
+                "ductSize": 0,
+            },
+            {
+                "name": "outer",
+                "windingType": "HELICAL",
+                "turnsPerPhase": 20,
+                "phaseCurrent": 10,
+                "loadLoss": 0,
+                "condIns": 3,
+                "radialThickness": 13,
+                "innerDiameter": 200,
+                "outerDiameter": 220,
+                "breadth": 10,
+                "turnsPerLayer": 10,
+                "axialParallel": 1,
+                "windingLength": 100,
+                "endClearance": 0,
+                "gapFromPrevious": 20,
+                "ducts": 0,
+                "ductSize": 0,
+            },
+        ]
+
+        result = calculate_vb_multi_impedance(
+            SimpleNamespace(kVA=100),
+            winding_data,
+            {"revisedVoltsPerTurn": 4},
+            {},
+            {"breakdown": {"pairs": []}},
+        )
+
+        outer_terms = result["breakdown"]["vb"]["termBreakdown"]["outer"]
+        self.assertAlmostEqual(outer_terms["delta"], 1.25, places=2)
+        self.assertAlmostEqual(outer_terms["ddelta"], 18.0, places=2)
+
+    def test_vb_multi_impedance_uses_scaled_outer_alpha_contribution(self):
+        winding_data = [
+            {
+                "name": "lv",
+                "windingType": "HELICAL",
+                "turnsPerPhase": 10,
+                "phaseCurrent": 100,
+                "loadLoss": 0,
+                "condIns": 1,
+                "radialThickness": 11,
+                "innerDiameter": 100,
+                "outerDiameter": 120,
+                "breadth": 10,
+                "turnsPerLayer": 10,
+                "axialParallel": 1,
+                "windingLength": 100,
+                "endClearance": 0,
+                "ducts": 0,
+                "ductSize": 0,
+            },
+            {
+                "name": "hv",
+                "windingType": "HELICAL",
+                "turnsPerPhase": 40,
+                "phaseCurrent": 10,
+                "loadLoss": 0,
+                "condIns": 2,
+                "radialThickness": 12,
+                "innerDiameter": 140,
+                "outerDiameter": 160,
+                "breadth": 10,
+                "turnsPerLayer": 10,
+                "axialParallel": 1,
+                "windingLength": 100,
+                "endClearance": 0,
+                "gapFromPrevious": 10,
+                "ducts": 0,
+                "ductSize": 0,
+            },
+            {
+                "name": "outer",
+                "windingType": "HELICAL",
+                "turnsPerPhase": 20,
+                "phaseCurrent": 10,
+                "loadLoss": 0,
+                "condIns": 3,
+                "radialThickness": 13,
+                "innerDiameter": 200,
+                "outerDiameter": 220,
+                "breadth": 10,
+                "turnsPerLayer": 10,
+                "axialParallel": 1,
+                "windingLength": 100,
+                "endClearance": 0,
+                "gapFromPrevious": 20,
+                "ducts": 0,
+                "ductSize": 0,
+            },
+        ]
+
+        result = calculate_vb_multi_impedance(
+            SimpleNamespace(kVA=100),
+            winding_data,
+            {"revisedVoltsPerTurn": 4},
+            {},
+            {"breakdown": {"pairs": []}},
+        )
+
+        outer_terms = result["breakdown"]["vb"]["termBreakdown"]["outer"]
+        self.assertAlmostEqual(outer_terms["prodAlpha"], 0.78, places=2)
+        self.assertEqual(result["ex"], 0.23)
 
 
 class CoreMaterialSpecificLossTests(TestCase):

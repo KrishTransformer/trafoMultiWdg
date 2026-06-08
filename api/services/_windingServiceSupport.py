@@ -275,8 +275,14 @@ def build_hv_section_results(
     allocated_voltage,
     seed_dimensions,
     dry_type,
+    current_density_override=None,
 ):
     winding_type = _normalize_winding_type(winding_type)
+    raw_winding = safe_winding(winding)
+    user_cond_breadth = raw_winding.condBreadth
+    user_cond_height = raw_winding.condHeight
+    user_conductor_diameter = raw_winding.conductorDiameter
+    user_current_density = raw_winding.currentDensity
     winding = seed_section_winding(winding, hv_source, winding_type)
     allocated_turns = safe_float(allocated_turns, 0.0)
     if allocated_turns <= 0:
@@ -285,22 +291,15 @@ def build_hv_section_results(
     turn_share = allocated_turns / turn_base if turn_base else 0.0
 
     current_per_phase = safe_float(hv_source.get("hvCurrentPerPhase"), 0.0)
+    target_current_density = safe_float(current_density_override, 0.0)
+    if target_current_density <= 0:
+        target_current_density = safe_float(user_current_density, 0.0)
     is_round = (
         winding.isConductorRound
         if winding.isConductorRound is not None
         else bool(hv_source.get("hvIsConductorRound"))
     )
     is_enamel = winding.isEnamel if winding.isEnamel is not None else bool(hv_source.get("hvIsEnamel"))
-    breadth = safe_float(winding.condBreadth, safe_float(hv_source.get("hvBreadth"), 0.0))
-    height = safe_float(winding.condHeight, safe_float(hv_source.get("hvHeight"), breadth))
-    if is_round and breadth <= 0:
-        breadth = safe_float(hv_source.get("hvBreadth"), 0.0)
-        height = breadth
-
-    conductor_insulation = safe_float(winding.condInsulation, safe_float(hv_source.get("hvConductorInsulation"), 0.0))
-    breadth_insulated = get_height_insulated(breadth, conductor_insulation)
-    height_insulated = get_height_insulated(height, conductor_insulation)
-
     radial_parallel = (
         winding.radialParallelCond
         if winding.radialParallelCond is not None
@@ -314,18 +313,57 @@ def build_hv_section_results(
     radial_parallel = max(1, radial_parallel)
     axial_parallel = max(1, axial_parallel)
     no_of_conductors = radial_parallel * axial_parallel
-    cross_sec_per_conductor = safe_float(
-        hv_source.get("hvCrossSecPerConductor"),
-        safe_float(hv_source.get("hvConductorCrossSection"), 0.0) / max(no_of_conductors, 1),
+    target_total_cond_cross_section = (
+        get_conductor_cross_section(current_per_phase, target_current_density)
+        if target_current_density > 0
+        else 0.0
     )
+    cross_sec_per_conductor = (
+        target_total_cond_cross_section / max(no_of_conductors, 1)
+        if target_total_cond_cross_section > 0
+        else safe_float(
+            hv_source.get("hvCrossSecPerConductor"),
+            safe_float(hv_source.get("hvConductorCrossSection"), 0.0) / max(no_of_conductors, 1),
+        )
+    )
+
+    if (
+        target_current_density > 0
+        and user_cond_breadth is None
+        and user_cond_height is None
+        and user_conductor_diameter is None
+    ):
+        if is_round:
+            breadth = two_digit_decimal(math.sqrt((4 * cross_sec_per_conductor) / math.pi)) if cross_sec_per_conductor > 0 else 0.0
+            height = breadth
+        else:
+            breadth = one_digit_decimal(max(2.0, math.sqrt(cross_sec_per_conductor * 4))) if cross_sec_per_conductor > 0 else 0.0
+            height = get_height(cross_sec_per_conductor, breadth) if breadth > 0 else 0.0
+            while height > 0 and breadth > 6 * height:
+                height = one_digit_decimal(height + 0.1)
+                breadth = get_height(cross_sec_per_conductor, height)
+                if breadth <= 6 * height:
+                    break
+            breadth = one_digit_decimal(breadth)
+    else:
+        breadth = safe_float(winding.condBreadth, safe_float(hv_source.get("hvBreadth"), 0.0))
+        height = safe_float(winding.condHeight, safe_float(hv_source.get("hvHeight"), breadth))
+        if is_round and breadth <= 0:
+            breadth = safe_float(hv_source.get("hvBreadth"), 0.0)
+            height = breadth
+
+    conductor_insulation = safe_float(winding.condInsulation, safe_float(hv_source.get("hvConductorInsulation"), 0.0))
+    breadth_insulated = get_height_insulated(breadth, conductor_insulation)
+    height_insulated = get_height_insulated(height, conductor_insulation)
 
     base_winding_length = safe_float(
         seed_dimensions.get("previousWindingLength"),
         safe_float(hv_source.get("hvWindingLength"), 0.0),
     )
-    revised_cond_cross_section = safe_float(
-        hv_source.get("hvRevisedCondCrossSection"),
-        get_revised_conductor_cross_section(breadth, height),
+    revised_cond_cross_section = (
+        two_digit_decimal(math.pi * math.pow(breadth, 2) / 4)
+        if is_round
+        else get_revised_conductor_cross_section(breadth, height)
     )
     total_cond_cross_section = get_actual_conductor_x_sec(revised_cond_cross_section, no_of_conductors)
     current_density = (

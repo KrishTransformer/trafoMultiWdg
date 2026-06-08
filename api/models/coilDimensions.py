@@ -12,6 +12,7 @@ class CoilDimensions(models.Model):
     hVRadial = models.IntegerField(default=0)
     hVOD = models.IntegerField(default=0)
     hVHVGap = models.FloatField(null=True, blank=True)
+    coilCoilGap = models.FloatField(null=True, blank=True)
     corseID = models.IntegerField(null=True, blank=True)
     corseRadial = models.IntegerField(null=True, blank=True)
     corseOD = models.IntegerField(null=True, blank=True)

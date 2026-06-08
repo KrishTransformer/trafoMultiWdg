@@ -12,4 +12,5 @@ def calculate_fine_windings(multi_winding, hv_source, seed_dimensions, allocated
         allocated_voltage=allocated_voltage,
         seed_dimensions=seed_dimensions,
         dry_type=bool(getattr(multi_winding, "dryType", False)),
+        current_density_override=getattr(multi_winding, "fineCurrentDensity", None),
     )
