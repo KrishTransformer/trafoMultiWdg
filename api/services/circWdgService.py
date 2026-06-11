@@ -15,6 +15,7 @@ from api.services.hvWindingService import calculate_hv_windings
 from api.services.impedanceVbService import calculate_vb_multi_impedance
 from api.services.lvWindingService import calculate_lv_windings
 from api.services.outerWindingService import calculate_outer_windings
+from api.services.tankOilService import calculate_tank_and_oil
 from api.services.windingFormulae import (
     CLASS_B,
     COPPER,
@@ -265,6 +266,7 @@ def _round_dimension(value):
 
 def _build_extra_winding_results(multi_winding, selection, hv_source, section_allocations, previous_geometry):
     radial_gaps = getattr(multi_winding, "radialGaps", None)
+    allow_turns_fallback = _get_total_taps(multi_winding) <= 0
     extra_results = {
         "corse": None,
         "fine": None,
@@ -280,6 +282,7 @@ def _build_extra_winding_results(multi_winding, selection, hv_source, section_al
             seed_dimensions,
             (section_allocations.get(winding_name) or {}).get("turns", 0.0),
             (section_allocations.get(winding_name) or {}).get("voltsPerPhase", 0.0),
+            allow_turns_fallback=allow_turns_fallback,
         )
         extra_results[winding_name] = result
         previous_geometry = build_geometry_snapshot(
@@ -412,7 +415,38 @@ def _build_section_allocation(turns=0.0, volts_per_phase=0.0, taps=0.0, turns_pe
     }
 
 
+def _get_total_taps(multi_winding):
+    return max(0, int((multi_winding.tapStepPositive or 0) + (multi_winding.tapStepNegative or 0)))
+
+
+def _get_supported_taps_for_winding(multi_winding, winding_name, turns_per_tap):
+    if safe_float(turns_per_tap, 0.0) <= 0:
+        return None
+
+    winding = getattr(multi_winding, WINDING_MODEL_ATTRS[winding_name], None)
+    winding_turns = safe_float(getattr(winding, "turnsPerPhase", None), 0.0) if winding is not None else 0.0
+    if winding_turns <= 0:
+        return None
+
+    return max(0, int(math.floor(winding_turns / turns_per_tap)))
+
+
+def _build_tap_turns(tap_count, turns_per_tap):
+    return two_digit_decimal(safe_float(tap_count, 0.0) * safe_float(turns_per_tap, 0.0))
+
+
+def _allocate_outer_first_taps(multi_winding, turns_per_tap):
+    total_taps = _get_total_taps(multi_winding)
+    outer_supported_taps = _get_supported_taps_for_winding(multi_winding, "outer", turns_per_tap)
+    outer_taps = total_taps if outer_supported_taps is None else min(total_taps, outer_supported_taps)
+    remaining_taps = max(total_taps - outer_taps, 0)
+    return outer_taps, remaining_taps
+
+
 def _apply_section_allocation_fallbacks(multi_winding, allocations, volts_per_turn):
+    if _get_total_taps(multi_winding) > 0:
+        return
+
     for winding_name in ("corse", "fine", "outer"):
         allocation = allocations[winding_name]
         if allocation["turns"] > 0:
@@ -466,7 +500,7 @@ def _get_high_side_distribution(multi_winding, lv_results, hv_results):
     highest_voltage = safe_float(hv_results.get("hvHighestTapVoltage"), safe_float(hv_results.get("hvVoltsPerPhase"), 0.0))
     lowest_voltage = safe_float(hv_results.get("hvLowestTapVoltage"), safe_float(hv_results.get("hvVoltsPerPhase"), 0.0))
     turns_per_tap = safe_float(hv_results.get("hvTurnsPerTap"), 0.0)
-    total_taps = safe_float((multi_winding.tapStepPositive or 0) + (multi_winding.tapStepNegative or 0), 0.0)
+    total_taps = _get_total_taps(multi_winding)
 
     allocations = {
         "lv": _build_section_allocation(
@@ -486,7 +520,7 @@ def _get_high_side_distribution(multi_winding, lv_results, hv_results):
         return allocations
 
     if selection == "3 Wdg (LV, HV-Main and Outer)":
-        outer_turns = total_taps * turns_per_tap
+        outer_turns = _build_tap_turns(total_taps, turns_per_tap)
         allocations["outer"] = _build_section_allocation(
             turns=outer_turns,
             volts_per_phase=_vb_int(outer_turns * volts_per_turn),
@@ -494,13 +528,10 @@ def _get_high_side_distribution(multi_winding, lv_results, hv_results):
             turns_per_tap=turns_per_tap,
         )
     elif selection == "4 Wdg (LV, HV-Main, Corse and Outer)":
-        corse_taps = _vb_int((0.5 * total_taps) + 0.6)
-        corse_turns = _vb_int((corse_taps * turns_per_tap) + 0.5)
+        outer_taps, corse_taps = _allocate_outer_first_taps(multi_winding, turns_per_tap)
+        outer_turns = _build_tap_turns(outer_taps, turns_per_tap)
+        corse_turns = _build_tap_turns(corse_taps, turns_per_tap)
         corse_volts = _vb_int(corse_turns * volts_per_turn)
-        remaining_taps = max(total_taps - corse_taps, 0.0)
-        outer_volts = _vb_int(max(highest_voltage - lowest_voltage - corse_volts, 0.0))
-        outer_turns = _vb_round1(outer_volts / max(volts_per_turn, 0.1))
-        outer_turns_per_tap = _vb_round1(outer_turns / max(remaining_taps, 1.0)) if remaining_taps > 0 else 0.0
         allocations["corse"] = _build_section_allocation(
             turns=corse_turns,
             volts_per_phase=corse_volts,
@@ -509,16 +540,15 @@ def _get_high_side_distribution(multi_winding, lv_results, hv_results):
         )
         allocations["outer"] = _build_section_allocation(
             turns=outer_turns,
-            volts_per_phase=outer_volts,
-            taps=remaining_taps,
-            turns_per_tap=outer_turns_per_tap,
+            volts_per_phase=_vb_int(outer_turns * volts_per_turn),
+            taps=outer_taps,
+            turns_per_tap=turns_per_tap,
         )
     elif selection == "4 Wdg (LV, HV-Main, Fine and Outer)":
-        fine_taps = _vb_int((0.5 * total_taps) + 0.6)
-        fine_turns = fine_taps * turns_per_tap
+        outer_taps, fine_taps = _allocate_outer_first_taps(multi_winding, turns_per_tap)
+        outer_turns = _build_tap_turns(outer_taps, turns_per_tap)
+        fine_turns = _build_tap_turns(fine_taps, turns_per_tap)
         fine_volts = _vb_int(fine_turns * volts_per_turn)
-        outer_taps = max(total_taps - fine_taps, 0.0)
-        outer_turns = outer_taps * turns_per_tap
         allocations["fine"] = _build_section_allocation(
             turns=fine_turns,
             volts_per_phase=fine_volts,
@@ -532,21 +562,10 @@ def _get_high_side_distribution(multi_winding, lv_results, hv_results):
             turns_per_tap=turns_per_tap,
         )
     elif selection == "5 Wdg (LV, HV-Main, Corse, Fine and Outer)":
-        corse_taps = _vb_int((0.5 * total_taps) + 0.6)
-        corse_turns = corse_taps * turns_per_tap
-        corse_volts = _vb_int(corse_turns * volts_per_turn)
-        remaining_taps = max(total_taps - corse_taps, 0.0)
-        fine_taps = _vb_int((0.5 * remaining_taps) + 0.6)
-        fine_turns = fine_taps * turns_per_tap
+        outer_taps, fine_taps = _allocate_outer_first_taps(multi_winding, turns_per_tap)
+        outer_turns = _build_tap_turns(outer_taps, turns_per_tap)
+        fine_turns = _build_tap_turns(fine_taps, turns_per_tap)
         fine_volts = _vb_int(fine_turns * volts_per_turn)
-        outer_taps = max(remaining_taps - fine_taps, 0.0)
-        outer_turns = outer_taps * turns_per_tap
-        allocations["corse"] = _build_section_allocation(
-            turns=corse_turns,
-            volts_per_phase=corse_volts,
-            taps=corse_taps,
-            turns_per_tap=turns_per_tap,
-        )
         allocations["fine"] = _build_section_allocation(
             turns=fine_turns,
             volts_per_phase=fine_volts,
@@ -1334,7 +1353,13 @@ def calculate_circ_wdg(multi_winding):
         getattr(multi_winding, "buildFactor", 1.25),
         core.wKgGrade,
     )
-    recomputed_tank_loss = get_tank_loss(multi_winding.kVA, lv_results["lvCurrentPerPhase"], multi_winding.lowVoltage, None, bool(getattr(multi_winding, "dryType", False)))
+    recomputed_tank_loss = get_tank_loss(
+        multi_winding.kVA,
+        lv_results["lvCurrentPerPhase"],
+        multi_winding.lowVoltage,
+        getattr(multi_winding, "tankLoss", None),
+        bool(getattr(multi_winding, "dryType", False)),
+    )
     core.coreWeight = recomputed_core_weight
     core.coreType = get_core_type(core.coreType)
 
@@ -1342,6 +1367,21 @@ def calculate_circ_wdg(multi_winding):
     inputs["core"] = core
     inputs["coilDimensions"] = coil_dimensions
     inputs["windingTypes"] = _build_winding_type_payload(multi_winding)
+    inputs["tank"] = {
+        "tankLoss": getattr(multi_winding, "tankLoss", None),
+        "wdgToTankGap": getattr(multi_winding, "wdgToTankGap", None),
+        "connectionGap": getattr(multi_winding, "connectionGap", None),
+        "topYokeToCoverGap": getattr(multi_winding, "topYokeToCoverGap", None),
+    }
+    inputs["cost"] = {
+        "copperCostPerKg": getattr(multi_winding, "copperCostPerKg", None),
+        "aluminiumCostPerKg": getattr(multi_winding, "aluminiumCostPerKg", None),
+        "coreCostPerKg": getattr(multi_winding, "coreCostPerKg", None),
+        "steelCostPerKg": getattr(multi_winding, "steelCostPerKg", None),
+        "oilCostPerKg": getattr(multi_winding, "oilCostPerKg", None),
+        "insulationCostPerKg": getattr(multi_winding, "insulationCostPerKg", None),
+        "radiatorCostPerKg": getattr(multi_winding, "radiatorCostPerKg", None),
+    }
 
     common = {
         "frequency": multi_winding.frequency,
@@ -1420,6 +1460,22 @@ def calculate_circ_wdg(multi_winding):
         "hvVoltsPerPhase",
         hv_results_for_calc["hvVoltsPerPhase"] if "hvVoltsPerPhase" in hv_results_for_calc else raw_hv_results["hvVoltsPerPhase"],
     )
+    tank_and_oil = calculate_tank_and_oil(
+        multi_winding,
+        lv_results,
+        raw_hv_results,
+        hv_results_for_calc,
+        corse_results,
+        fine_results,
+        outer_results,
+        core,
+        coil_dimensions,
+        recomputed_core_loss,
+        recomputed_tank_loss,
+        high_side_distribution,
+    )
+    hv_winding_response["tankLoss"] = tank_and_oil["tankLoss"]
+    hv_winding_response["totalLoadLoss"] = total_load_loss
     # hv_winding_response["kW55"] = kw55
     # common["kW55"] = kw55
 
@@ -1513,6 +1569,7 @@ def calculate_circ_wdg(multi_winding):
                 outer_winding_model,
             ),
             "insulation": _build_insulation_payload(multi_winding, coil_dimensions),
+            "tankAndOil": tank_and_oil,
             "lossesAt50Percent": losses_at_50,
             "lossesAt100Percent": losses_at_100,
             "nlCurrentPercentage": get_nl_current_percentage(core.coreWeight, recomputed_core_loss, multi_winding.kVA) if multi_winding.kVA else 0,

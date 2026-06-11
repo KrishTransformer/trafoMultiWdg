@@ -276,6 +276,7 @@ def build_hv_section_results(
     seed_dimensions,
     dry_type,
     current_density_override=None,
+    allow_turns_fallback=True,
 ):
     winding_type = _normalize_winding_type(winding_type)
     raw_winding = safe_winding(winding)
@@ -285,7 +286,7 @@ def build_hv_section_results(
     user_current_density = raw_winding.currentDensity
     winding = seed_section_winding(winding, hv_source, winding_type)
     allocated_turns = safe_float(allocated_turns, 0.0)
-    if allocated_turns <= 0:
+    if allocated_turns <= 0 and allow_turns_fallback:
         allocated_turns = safe_float(getattr(winding, "turnsPerPhase", None), 0.0)
     turn_base = max(safe_float(hv_source.get("hvTurnsAtHighest"), 0.0), 1.0)
     turn_share = allocated_turns / turn_base if turn_base else 0.0

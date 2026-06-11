@@ -1,7 +1,14 @@
 from api.services._windingServiceSupport import build_hv_section_results
 
 
-def calculate_outer_windings(multi_winding, hv_source, seed_dimensions, allocated_turns, allocated_voltage):
+def calculate_outer_windings(
+    multi_winding,
+    hv_source,
+    seed_dimensions,
+    allocated_turns,
+    allocated_voltage,
+    allow_turns_fallback=True,
+):
     return build_hv_section_results(
         section_name="outer",
         winding_type=getattr(multi_winding, "outerWindingType", "HELICAL"),
@@ -13,4 +20,5 @@ def calculate_outer_windings(multi_winding, hv_source, seed_dimensions, allocate
         seed_dimensions=seed_dimensions,
         dry_type=bool(getattr(multi_winding, "dryType", False)),
         current_density_override=getattr(multi_winding, "outerCurrentDensity", None),
+        allow_turns_fallback=allow_turns_fallback,
     )

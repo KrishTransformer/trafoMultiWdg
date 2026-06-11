@@ -136,6 +136,53 @@ def _build_multi_winding(payload):
         if key in payload:
             setattr(multi_winding, key, payload[key])
 
+    for key in [
+        "isOLTC",
+        "isCSP",
+        "eRadiatorType",
+        "radiatorType",
+        "lvTerminalType",
+        "hvTerminalType",
+        "ambientTemp",
+        "windingTemp",
+        "topOilTemp",
+        "radiatorWidth",
+        "copperCostPerKg",
+        "aluminiumCostPerKg",
+        "coreCostPerKg",
+        "steelCostPerKg",
+        "oilCostPerKg",
+        "insulationCostPerKg",
+        "radiatorCostPerKg",
+    ]:
+        if key in payload:
+            setattr(multi_winding, key, payload[key])
+
+    tank_payload = payload.get("tank")
+    if isinstance(tank_payload, dict):
+        for source_key, attr_name in [
+            ("tankLoss", "tankLoss"),
+            ("wdgToTankGap", "wdgToTankGap"),
+            ("connectionGap", "connectionGap"),
+            ("topYokeToCoverGap", "topYokeToCoverGap"),
+        ]:
+            if source_key in tank_payload:
+                setattr(multi_winding, attr_name, tank_payload[source_key])
+
+    cost_payload = payload.get("cost")
+    if isinstance(cost_payload, dict):
+        for key in [
+            "copperCostPerKg",
+            "aluminiumCostPerKg",
+            "coreCostPerKg",
+            "steelCostPerKg",
+            "oilCostPerKg",
+            "insulationCostPerKg",
+            "radiatorCostPerKg",
+        ]:
+            if key in cost_payload:
+                setattr(multi_winding, key, cost_payload[key])
+
     return multi_winding
 
 

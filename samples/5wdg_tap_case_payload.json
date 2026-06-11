@@ -1,0 +1,25 @@
+{
+  "windingSelection": "5 Wdg (LV, HV-Main, Corse, Fine and Outer)",
+  "kVA": 100,
+  "kValue": 0.45,
+  "vectorGroup": "Dyn11",
+  "lowVoltage": 433,
+  "highVoltage": 11000,
+  "tapStepsPercentage": 2.5,
+  "tapStepPositive": 2,
+  "tapStepNegative": 2,
+  "hvWindingType": "Helical",
+  "corseWindingType": "Helical",
+  "fineWindingType": "Helical",
+  "outerWindingType": "Helical",
+  "outerWindings": {
+    "turnsPerPhase": 100
+  },
+  "radialGaps": {
+    "coreToLv": 5,
+    "lvToHv": 10,
+    "lvToCoarse": 8,
+    "fineToCoarse": 6,
+    "fineToOuter": 10
+  }
+}

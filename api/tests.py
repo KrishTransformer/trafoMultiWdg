@@ -13,6 +13,7 @@ from api.services import (
     calculate_lv_windings,
     calculate_outer_windings,
 )
+from api.services.circWdgService import _get_high_side_distribution
 from api.services.impedanceVbService import calculate_vb_multi_impedance
 from api.services.windingFormulae import get_specific_loss, select_radiators
 
@@ -593,7 +594,7 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        for winding_name in ("corse", "fine", "outer"):
+        for winding_name in ("corse", "fine"):
             model = response.json()["inputs"]["windingModels"][winding_name]
             result = response.json()["results"][f"{winding_name}Winding"]
             self.assertEqual(model["turnsPerLayer"], 204.0)
@@ -603,6 +604,15 @@ class MultiWdgCalculatorEndpointTests(TestCase):
             self.assertEqual(result["turnsPerLayer"], 204.0)
             self.assertEqual(result["noOfLayers"], 1.0)
             self.assertEqual(result["endClearance"], 49.0)
+
+        outer_model = response.json()["inputs"]["windingModels"]["outer"]
+        outer_result = response.json()["results"]["outerWinding"]
+        self.assertEqual(outer_model["turnsPerLayer"], 204.0)
+        self.assertEqual(outer_model["endClearances"], 49.0)
+        self.assertAlmostEqual(outer_model["noOfLayers"], 1.21, places=2)
+        self.assertEqual(outer_result["turnsPerLayer"], 204.0)
+        self.assertEqual(outer_result["endClearance"], 49.0)
+        self.assertAlmostEqual(outer_result["noOfLayers"], 1.21, places=2)
 
     def test_multi_wdg_extra_windings_number_in_parallel_matches_lv_hv_format(self):
         payload = {
@@ -948,6 +958,114 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         self.assertIn(" L X ", hv_model["conductorSizes"])
         self.assertTrue(hv_model["conductorSizes"].endswith(" B"))
 
+    def test_api_returns_tank_and_oil_results(self):
+        payload = {
+            "windings": "LV-HV",
+            "kVA": 100,
+            "kValue": 0.45,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 433,
+            "highVoltage": 11000,
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        tank_and_oil = response.json()["results"]["tankAndOil"]
+        self.assertEqual(tank_and_oil["tankLength"], 685)
+        self.assertEqual(tank_and_oil["tankWidth"], 285)
+        self.assertEqual(tank_and_oil["tankHeight"], 615)
+        self.assertEqual(tank_and_oil["radiatorHeight"], 400)
+        self.assertEqual(tank_and_oil["radiatorWidth"], 226)
+        self.assertEqual(tank_and_oil["radiatorSection"], 19)
+        self.assertEqual(tank_and_oil["noOfRadiators"], 4)
+        self.assertEqual(tank_and_oil["tankLoss"], 80)
+        self.assertEqual(response.json()["results"]["hvWinding"]["tankLoss"], tank_and_oil["tankLoss"])
+        self.assertEqual(tank_and_oil["capitalCost"], 151735)
+
+    def test_api_uses_tank_override_inputs_in_tank_and_oil_results(self):
+        payload = {
+            "windings": "LV-HV",
+            "kVA": 100,
+            "kValue": 0.45,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 433,
+            "highVoltage": 11000,
+            "tank": {
+                "wdgToTankGap": 40,
+                "connectionGap": 35,
+                "topYokeToCoverGap": 80,
+            },
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        tank_and_oil = response.json()["results"]["tankAndOil"]
+        self.assertEqual(tank_and_oil["tankLength"], 715)
+        self.assertEqual(tank_and_oil["tankWidth"], 325)
+        self.assertEqual(tank_and_oil["tankHeight"], 635)
+        self.assertEqual(tank_and_oil["wdgTankGap"], 40)
+        self.assertEqual(tank_and_oil["connectionGap"], 35)
+        self.assertEqual(tank_and_oil["topYokeCoverGap"], 80)
+
+    def test_api_supports_pipe_cooling_branch_in_tank_and_oil_results(self):
+        payload = {
+            "windings": "LV-HV",
+            "kVA": 1000,
+            "kValue": 0.45,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 433,
+            "highVoltage": 11000,
+            "radiatorType": "PIPES",
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        tank_and_oil = response.json()["results"]["tankAndOil"]
+        self.assertEqual(tank_and_oil["pipeLength"], 0.2)
+        self.assertEqual(tank_and_oil["oilInRadiators"], 1)
+        self.assertEqual(tank_and_oil["totalRadiatorWeight"], 1)
+        self.assertIn("Pipe", tank_and_oil["coolingStatement"])
+
+    def test_api_supports_corrugation_cooling_branch_in_tank_and_oil_results(self):
+        payload = {
+            "windings": "LV-HV",
+            "kVA": 1000,
+            "kValue": 0.45,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 433,
+            "highVoltage": 11000,
+            "radiatorType": "CORRUGATION",
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        tank_and_oil = response.json()["results"]["tankAndOil"]
+        self.assertEqual(tank_and_oil["radiatorHeight"], 800)
+        self.assertEqual(tank_and_oil["radiatorWidth"], 1)
+        self.assertEqual(tank_and_oil["corrugationSlitsOnLength"], 38)
+        self.assertEqual(tank_and_oil["corrugationSlitsOnWidth"], 12)
+        self.assertEqual(tank_and_oil["totalRadiatorWeight"], 1)
+
 
 class RadiatorSelectionTests(TestCase):
     def test_select_radiators_matches_vb_style_selection(self):
@@ -1009,6 +1127,166 @@ class RadiatorSelectionTests(TestCase):
         self.assertEqual(result["selectionText"], "38mm Pipes x 271.0 M ")
         self.assertEqual(result["pipeLength"], 271.0)
         self.assertEqual(result["radiatorSections"], 0)
+
+
+class HighSideDistributionTests(TestCase):
+    def setUp(self):
+        self.lv_results = {
+            "revisedVoltsPerTurn": 5.0,
+            "lvTurnsPerPhase": 50.0,
+            "lvVoltsPerPhase": 433.0,
+        }
+        self.hv_results = {
+            "hvTurnsAtHighest": 140.0,
+            "hvTurnsAtLowest": 100.0,
+            "hvHighestTapVoltage": 11000.0,
+            "hvLowestTapVoltage": 10000.0,
+            "hvVoltsPerPhase": 10500.0,
+            "hvTurnsPerTap": 10.0,
+            "hvTurnsPerPhase": 120.0,
+        }
+
+    def test_2wdg_keeps_all_taps_in_hv_main(self):
+        multi_winding = MultiWindings(
+            windings="2 Wdg (LV and HV-Main)",
+            tapStepPositive=2,
+            tapStepNegative=2,
+        )
+
+        distribution = _get_high_side_distribution(multi_winding, self.lv_results, self.hv_results)
+
+        self.assertEqual(distribution["hv"]["turns"], 140.0)
+        self.assertEqual(distribution["hv"]["voltsPerPhase"], 11000.0)
+        self.assertEqual(distribution["outer"]["turns"], 0.0)
+        self.assertEqual(distribution["fine"]["turns"], 0.0)
+        self.assertEqual(distribution["corse"]["turns"], 0.0)
+
+    def test_3wdg_puts_all_taps_in_outer_only(self):
+        multi_winding = MultiWindings(
+            windings="3 Wdg (LV, HV-Main and Outer)",
+            tapStepPositive=2,
+            tapStepNegative=2,
+        )
+
+        distribution = _get_high_side_distribution(multi_winding, self.lv_results, self.hv_results)
+
+        self.assertEqual(distribution["hv"]["turns"], 100.0)
+        self.assertEqual(distribution["outer"]["turns"], 40.0)
+        self.assertEqual(distribution["outer"]["taps"], 4.0)
+        self.assertEqual(distribution["fine"]["turns"], 0.0)
+        self.assertEqual(distribution["corse"]["turns"], 0.0)
+
+    def test_4wdg_c_overflow_moves_remaining_taps_to_corse(self):
+        multi_winding = MultiWindings(
+            windings="4 Wdg (LV, HV-Main, Corse and Outer)",
+            tapStepPositive=2,
+            tapStepNegative=2,
+        )
+        multi_winding.outerWindings = Windings(turnsPerPhase=25.0)
+
+        distribution = _get_high_side_distribution(multi_winding, self.lv_results, self.hv_results)
+
+        self.assertEqual(distribution["outer"]["turns"], 20.0)
+        self.assertEqual(distribution["outer"]["taps"], 2.0)
+        self.assertEqual(distribution["corse"]["turns"], 20.0)
+        self.assertEqual(distribution["corse"]["taps"], 2.0)
+        self.assertEqual(distribution["fine"]["turns"], 0.0)
+
+    def test_4wdg_f_overflow_moves_remaining_taps_to_fine(self):
+        multi_winding = MultiWindings(
+            windings="4 Wdg (LV, HV-Main, Fine and Outer)",
+            tapStepPositive=2,
+            tapStepNegative=2,
+        )
+        multi_winding.outerWindings = Windings(turnsPerPhase=35.0)
+
+        distribution = _get_high_side_distribution(multi_winding, self.lv_results, self.hv_results)
+
+        self.assertEqual(distribution["outer"]["turns"], 30.0)
+        self.assertEqual(distribution["outer"]["taps"], 3.0)
+        self.assertEqual(distribution["fine"]["turns"], 10.0)
+        self.assertEqual(distribution["fine"]["taps"], 1.0)
+        self.assertEqual(distribution["corse"]["turns"], 0.0)
+
+    def test_5wdg_without_outer_limit_keeps_all_taps_in_outer(self):
+        multi_winding = MultiWindings(
+            windings="5 Wdg (LV, HV-Main, Corse, Fine and Outer)",
+            tapStepPositive=2,
+            tapStepNegative=2,
+        )
+
+        distribution = _get_high_side_distribution(multi_winding, self.lv_results, self.hv_results)
+
+        self.assertEqual(distribution["outer"]["turns"], 40.0)
+        self.assertEqual(distribution["outer"]["taps"], 4.0)
+        self.assertEqual(distribution["fine"]["turns"], 0.0)
+        self.assertEqual(distribution["corse"]["turns"], 0.0)
+
+    def test_5wdg_outer_overflow_moves_remaining_taps_to_fine_only(self):
+        multi_winding = MultiWindings(
+            windings="5 Wdg (LV, HV-Main, Corse, Fine and Outer)",
+            tapStepPositive=2,
+            tapStepNegative=2,
+        )
+        multi_winding.outerWindings = Windings(turnsPerPhase=20.0)
+
+        distribution = _get_high_side_distribution(multi_winding, self.lv_results, self.hv_results)
+
+        self.assertEqual(distribution["outer"]["turns"], 20.0)
+        self.assertEqual(distribution["outer"]["taps"], 2.0)
+        self.assertEqual(distribution["fine"]["turns"], 20.0)
+        self.assertEqual(distribution["fine"]["taps"], 2.0)
+        self.assertEqual(distribution["corse"]["turns"], 0.0)
+
+
+class TapDistributionIntegrationTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+
+    def test_5wdg_taps_do_not_backfill_corse_when_outer_overflows(self):
+        payload = {
+            "windingSelection": "5 Wdg (LV, HV-Main, Corse, Fine and Outer)",
+            "kVA": 100,
+            "kValue": 0.45,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 433,
+            "highVoltage": 11000,
+            "tapStepsPercentage": 2.5,
+            "tapStepPositive": 2,
+            "tapStepNegative": 2,
+            "hvWindingType": "Helical",
+            "corseWindingType": "Helical",
+            "fineWindingType": "Helical",
+            "outerWindingType": "Helical",
+            "corseWindings": {
+                "turnsPerPhase": 220,
+            },
+            "fineWindings": {
+                "turnsPerPhase": 120,
+            },
+            "outerWindings": {
+                "turnsPerPhase": 100,
+            },
+            "radialGaps": {
+                "coreToLv": 5,
+                "lvToHv": 10,
+                "lvToCoarse": 8,
+                "fineToCoarse": 6,
+                "fineToOuter": 10,
+            },
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        hv_turns_per_tap = response.json()["results"]["hvWinding"]["hvTurnsPerTap"]
+        self.assertAlmostEqual(response.json()["results"]["outerWinding"]["turnsPerPhase"], hv_turns_per_tap, places=2)
+        self.assertAlmostEqual(response.json()["results"]["fineWinding"]["turnsPerPhase"], hv_turns_per_tap * 3, places=2)
+        self.assertEqual(response.json()["results"]["corseWinding"]["turnsPerPhase"], 0.0)
 
 
 class VbMultiImpedanceTests(TestCase):

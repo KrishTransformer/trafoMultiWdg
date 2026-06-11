@@ -5,6 +5,7 @@ from .hvWindingService import calculate_hv_windings
 from .outerWindingService import calculate_outer_windings
 from .fineWindingService import calculate_fine_windings
 from .corseWindingService import calculate_corse_windings
+from .tankOilService import calculate_tank_and_oil
 
 __all__ = [
     "build_winding_formula_context",
@@ -15,4 +16,5 @@ __all__ = [
     "calculate_outer_windings",
     "calculate_fine_windings",
     "calculate_corse_windings",
+    "calculate_tank_and_oil",
 ]

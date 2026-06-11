@@ -39,7 +39,6 @@ from api.services.windingFormulae import (
     get_id,
     get_insulated_weight,
     get_inter_layer_insulation,
-    get_kw55,
     get_load_loss,
     get_lmt,
     get_lv_hv_gap,
@@ -57,7 +56,6 @@ from api.services.windingFormulae import (
     get_stray_loss,
     get_stray_loss_for_disc,
     get_stray_loss_for_x_over,
-    get_tank_loss,
     get_tap_currents,
     get_tap_voltages,
     get_turns_at_tap,
@@ -397,12 +395,10 @@ def calculate_hv_windings(multi_winding, lv_results):
         getattr(getattr(multi_winding, "core", None), "wKgGrade", None),
     )
     core_loss = get_core_loss(core_weight, getattr(multi_winding, "buildFactor", 1.25), specific_loss)
-    tank_loss = get_tank_loss(multi_winding.kVA, lv_results["lvCurrentPerPhase"], multi_winding.lowVoltage, None, dry_type)
-    total_load_loss = next_integer(lv_results["lvLoadLoss"] + load_loss_normal + tank_loss)
     # kW55 is temporarily disabled while we validate the remaining multi-winding flow.
     # kw55 = None
     # if not _is_multi_winding_design(multi_winding):
-    #     kw55 = get_kw55(core_loss, lv_results["lvLoadLoss"], load_loss_lowest, tank_loss, lv_results["lvGradient"], gradient)
+    #     kw55 = get_kw55(core_loss, lv_results["lvLoadLoss"], load_loss_lowest, ..., lv_results["lvGradient"], gradient)
     gradient_limit = get_gradient_limit(dry_type, dry_temp_class)
     active_part_length = (2 * center_distance) + hv_od
     active_part_height = int((2 * lv_results["coreDiameter"]) + lv_results["windowHeight"])
@@ -469,8 +465,6 @@ def calculate_hv_windings(multi_winding, lv_results):
         "coreWeight": core_weight,
         "wKgGrade": specific_loss,
         "coreLoss": core_loss,
-        "tankLoss": tank_loss,
-        "totalLoadLoss": total_load_loss,
         # "kW55": kw55,
         "gradientLimit": gradient_limit,
         "activePartSize": active_part_size,
