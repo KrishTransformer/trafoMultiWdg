@@ -1570,7 +1570,7 @@ def calculate_circ_wdg(multi_winding):
             ),
             "insulation": _build_insulation_payload(multi_winding, coil_dimensions),
             "tankAndOil": tank_and_oil,
-            "lossesAt50Percent": losses_at_50,
+                "lossesAt50Percent": losses_at_50,
             "lossesAt100Percent": losses_at_100,
             "nlCurrentPercentage": get_nl_current_percentage(core.coreWeight, recomputed_core_loss, multi_winding.kVA) if multi_winding.kVA else 0,
         },

@@ -1,0 +1,6 @@
+[08/Jun/2026 18:14:47] "GET / HTTP/1.1" 200 27
+[08/Jun/2026 18:14:48,056] - Broken pipe from ('127.0.0.1', 56963)
+[08/Jun/2026 18:15:14] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 12443
+Bad Request: /api/multiWdgCalculator/
+[08/Jun/2026 18:17:04] "POST /api/multiWdgCalculator/ HTTP/1.1" 400 72
+[08/Jun/2026 18:17:18] "POST /api/multiWdgCalculator/ HTTP/1.1" 200 15264

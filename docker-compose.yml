@@ -1,0 +1,10 @@
+services:
+  multiwdg-backend:
+    build:
+      context: .
+    container_name: multiwdg-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./db.sqlite3:/app/db.sqlite3
+    restart: unless-stopped
