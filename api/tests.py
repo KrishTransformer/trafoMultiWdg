@@ -1243,6 +1243,43 @@ class TapDistributionIntegrationTests(TestCase):
     def setUp(self):
         self.client = Client()
 
+    def test_5wdg_disc_payload_with_high_gradients_does_not_raise_math_domain_error(self):
+        payload = {
+            "windingSelection": "5 Wdg (LV, HV-Main, Corse, Fine and Outer)",
+            "kVA": 1800,
+            "kValue": 0.45,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 11000,
+            "highVoltage": 33000,
+            "tapStepsPercentage": 2.5,
+            "tapStepPositive": 2,
+            "tapStepNegative": 2,
+            "lvWindingType": "DISC",
+            "hvWindingType": "DISC",
+            "corseWindingType": "Helical",
+            "fineWindingType": "Helical",
+            "outerWindingType": "Helical",
+            "outerWindings": {
+                "turnsPerPhase": 100,
+            },
+            "radialGaps": {
+                "coreToLv": 5,
+                "lvToHv": 10,
+                "lvToCoarse": 8,
+                "fineToCoarse": 6,
+                "fineToOuter": 10,
+            },
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertGreater(response.json()["results"]["tankAndOil"]["kw55"], 0)
+
     def test_5wdg_taps_do_not_backfill_corse_when_outer_overflows(self):
         payload = {
             "windingSelection": "5 Wdg (LV, HV-Main, Corse, Fine and Outer)",
