@@ -18,8 +18,8 @@
   "radialGaps": {
     "coreToLv": 5,
     "lvToHv": 10,
-    "lvToCoarse": 8,
-    "fineToCoarse": 6,
+    "hvToCorse": 8,
+    "corseToFine": 6,
     "fineToOuter": 10
   }
 }

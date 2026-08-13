@@ -1201,7 +1201,12 @@ def get_tank_loss(kva, phase_current, low_voltage, tank_loss=None, dry_type=Fals
 
 def get_kw55(core_loss, lv_load_loss, hv_load_loss, tank_loss, lv_gradient, hv_gradient):
     gradient55 = 14.5 if lv_gradient < 14.5 and hv_gradient < 14.5 else max(lv_gradient, hv_gradient)
-    new_top_oil_temperature = max(1.0, 98 - 32 - (1.1 * gradient55))
+    new_top_oil_temperature = 98 - 32 - (1.1 * gradient55)
+    if new_top_oil_temperature <= 0:
+        raise ValueError(
+            "Invalid KW55 thermal state: computed top oil temperature is non-positive "
+            f"for gradients LV={lv_gradient}, HV={hv_gradient}"
+        )
     kw55_factor = math.pow(55 / new_top_oil_temperature, (1 / 0.7))
     total_loss = core_loss + (1.1 * (lv_load_loss + hv_load_loss + tank_loss))
     return next_5or0_integer(kw55_factor * total_loss)
@@ -1211,7 +1216,12 @@ def get_kw55_for_multiple_windings(core_loss, winding_load_losses, tank_loss, wi
     gradients = [max(0.0, float(gradient)) for gradient in winding_gradients if gradient is not None]
     peak_gradient = max(gradients, default=0.0)
     gradient55 = 14.5 if peak_gradient < 14.5 else peak_gradient
-    new_top_oil_temperature = max(1.0, 98 - 32 - (1.1 * gradient55))
+    new_top_oil_temperature = 98 - 32 - (1.1 * gradient55)
+    if new_top_oil_temperature <= 0:
+        raise ValueError(
+            "Invalid KW55 thermal state: computed top oil temperature is non-positive "
+            f"for peak gradient {peak_gradient}"
+        )
     kw55_factor = math.pow(55 / new_top_oil_temperature, (1 / 0.7))
     total_loss = core_loss + (1.1 * (sum(winding_load_losses) + tank_loss))
     return next_5or0_integer(kw55_factor * total_loss)

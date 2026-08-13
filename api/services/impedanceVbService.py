@@ -1,7 +1,7 @@
 import math
 
 from api.services.numberUtils import two_digit_decimal
-from api.services.windingFormulae import ek
+from api.services.windingFormulae import ek, ex as winding_ex, h1h2, ls as winding_ls
 
 
 DISC_TYPES = {"DISC", "LAYER_DISC"}
@@ -65,189 +65,231 @@ def _vb_axial_length(section):
     return max(axial, 0.0)
 
 
-def _vb_rdc(section):
-    no_of_ducts = max(0.0, _safe_float(section.get("ducts"), 0.0))
-    return (1 - (1 / (no_of_ducts + 1))) / 2 if no_of_ducts >= 0 else 0.0
+def _tap_h(section):
+    return max(
+        h1h2(
+            _safe_float(section.get("radialThickness"), 0.0),
+            int(round(_safe_float(section.get("ducts"), 0.0))),
+            _safe_float(section.get("ductSize"), 0.0),
+            _safe_float(section.get("condIns"), 0.0),
+        ),
+        0.0,
+    )
 
 
-def _vb_insulated_height(section):
-    radial_thickness = _safe_float(section.get("radialThickness"), 0.0)
-    conductor_insulation = _safe_float(section.get("condIns"), 0.0)
-    duct_size = _safe_float(section.get("ductSize"), 0.0)
-    return (radial_thickness - conductor_insulation - (_vb_rdc(section) * (duct_size + conductor_insulation))) / 10
+def _section_turns(section):
+    return _safe_float(section.get("turnsPerPhase"), 0.0)
 
 
-def _vb_gap_cm(inner_section, outer_section):
-    return (
-        _safe_float(outer_section.get("gapFromPrevious"), 0.0)
-        + _safe_float(inner_section.get("condIns"), 0.0)
-        + _safe_float(outer_section.get("condIns"), 0.0)
-    ) / 20
+def _hv_main_normal_load_loss(section_map, hv_results):
+    hv = section_map.get("hv", {})
+    return _safe_float(
+        hv_results.get("hvLoadLossAtNormal", hv.get("hvLoadLossAtNormal", hv.get("loadLoss", 0.0))),
+        0.0,
+    )
 
 
-def _vb_mean_diameter_cm(inner_diameter, outer_diameter):
-    return (_safe_float(inner_diameter, 0.0) + _safe_float(outer_diameter, 0.0)) / 20
+def _hv_main_lowest_load_loss(section_map, hv_results):
+    hv = section_map.get("hv", {})
+    return _safe_float(
+        hv_results.get("hvLoadLossAtLowest", hv.get("hvLoadLossAtLowest", hv.get("loadLoss", 0.0))),
+        0.0,
+    )
 
 
-def _gamma(value, sigma_hv):
-    return _safe_float(value, 0.0) / max(sigma_hv, 1.0)
+def _normal_tap_turns(multi_winding, tap_sections):
+    total_extra_turns = sum(_section_turns(section) for section in tap_sections)
+    total_taps = max(
+        int(getattr(multi_winding, "tapStepPositive", 0) or 0)
+        + int(getattr(multi_winding, "tapStepNegative", 0) or 0),
+        0,
+    )
+    if total_extra_turns <= 0:
+        return 0.0
+    if total_taps <= 0:
+        return total_extra_turns
+    return total_extra_turns * max(int(getattr(multi_winding, "tapStepNegative", 0) or 0), 0) / total_taps
 
 
-def _alpha(gamma_value):
-    return 1 - gamma_value + ((gamma_value * gamma_value) / 3)
+def _normal_tap_usage(tap_sections, normal_turns):
+    remaining_turns = max(normal_turns, 0.0)
+    usage = {}
+    for section in tap_sections:
+        turns = _section_turns(section)
+        if turns <= 0 or remaining_turns <= 0:
+            included_turns = 0.0
+        else:
+            included_turns = min(turns, remaining_turns)
+        fraction = (included_turns / turns) if turns > 0 else 0.0
+        usage[section["name"]] = {
+            "includedTurns": included_turns,
+            "fraction": fraction,
+            "included": fraction >= 0.5,
+        }
+        remaining_turns = max(remaining_turns - included_turns, 0.0)
+    return usage
+
+
+def _included_hv_sections(hv_section, tap_sections, normal_usage, condition):
+    sections = []
+    if hv_section:
+        sections.append(hv_section)
+    if condition == "lowest":
+        return sections
+    if condition == "highest":
+        return sections + tap_sections
+    return sections + [
+        section
+        for section in tap_sections
+        if normal_usage.get(section["name"], {}).get("included", False)
+    ]
+
+
+def _pair_ls_values(lv_section, hv_section):
+    return winding_ls(
+        _safe_float(lv_section.get("breadthInsulated"), 0.0),
+        _safe_float(hv_section.get("breadthInsulated"), 0.0),
+        _safe_float(lv_section.get("turnsPerLayer"), 1.0),
+        _safe_float(hv_section.get("turnsPerLayer"), 1.0),
+        max(1, int(round(_safe_float(lv_section.get("axialParallel"), 1.0)))),
+        max(1, int(round(_safe_float(hv_section.get("axialParallel"), 1.0)))),
+        _safe_float(hv_section.get("outerDiameter"), 0.0),
+        _safe_float(lv_section.get("innerDiameter"), 0.0),
+        _safe_float(lv_section.get("condIns"), 0.0),
+        _safe_float(hv_section.get("condIns"), 0.0),
+        _safe_float(lv_section.get("windingLength"), 0.0),
+        _safe_float(hv_section.get("windingLength"), 0.0),
+        lv_section.get("windingType"),
+        hv_section.get("windingType"),
+        _safe_float(lv_section.get("transposition"), 0.0),
+        _safe_float(hv_section.get("transposition"), 0.0),
+        max(0, int(round(_safe_float(hv_section.get("noOfCoils"), 0.0)))),
+    )
+
+
+def _average_l_value(lv_section, hv_sections):
+    if not hv_sections:
+        return 0.0
+    return sum(_pair_ls_values(lv_section, section)[1] for section in hv_sections) / len(hv_sections)
+
+
+def _tap_geometry(lv_section, hv_sections, volts_per_turn, ampere_turn_value, frequency_factor):
+    hv_main = hv_sections[0] if hv_sections else {}
+    outermost_hv = hv_sections[-1] if hv_sections else {}
+    h1_value = _tap_h(lv_section)
+    h2_value = max(sum(_tap_h(section) for section in hv_sections), 0.0)
+    l_value = _average_l_value(lv_section, hv_sections) if hv_sections else 0.0
+    b_value = (
+        _safe_float(outermost_hv.get("outerDiameter"), 0.0)
+        - _safe_float(lv_section.get("innerDiameter"), 0.0)
+        - _safe_float(outermost_hv.get("condIns"), 0.0)
+        - _safe_float(lv_section.get("condIns"), 0.0)
+    ) / 2
+    b_value = max(b_value, 0.001)
+    power = math.pi * l_value / b_value if b_value else 0.0
+    k_ratio = 1 - ((1 - math.exp(-power)) / power) if power else 1.0
+    ls_value = l_value / k_ratio if k_ratio else l_value
+    ex_values = winding_ex(
+        volts_per_turn,
+        _safe_float(hv_main.get("gapFromPrevious"), 0.0),
+        _safe_float(lv_section.get("condIns"), 0.0),
+        _safe_float(hv_main.get("condIns"), 0.0),
+        h1_value,
+        h2_value,
+        ampere_turn_value,
+        max(ls_value, 0.001),
+        _safe_float(lv_section.get("outerDiameter"), 0.0),
+        frequency_factor,
+    )
+    return {
+        "h1": two_digit_decimal(h1_value),
+        "h2": two_digit_decimal(h2_value),
+        "delta": two_digit_decimal(ex_values[0]),
+        "delta1": two_digit_decimal(ex_values[1]),
+        "ds": two_digit_decimal(ex_values[2]),
+        "l": two_digit_decimal(l_value),
+        "b": two_digit_decimal(b_value),
+        "kR": two_digit_decimal(k_ratio),
+        "ls": two_digit_decimal(ls_value),
+        "ex": two_digit_decimal(ex_values[3]),
+        "includedHvWindings": [section["name"] for section in hv_sections],
+        "outermostHvWinding": outermost_hv.get("name"),
+    }
+
+
+def _tap_resistance(load_loss, kva):
+    return two_digit_decimal(_safe_float(load_loss, 0.0) / max(_safe_float(kva, 0.0), 1.0) / 10)
 
 
 def calculate_vb_multi_impedance(multi_winding, winding_data, lv_results, hv_results, pairwise_summary):
     sections = _build_section_map(winding_data)
     lv = sections.get("lv", {})
-    hv = sections.get("hv", {})
     active_sections = _active_sections(winding_data)
     active_order = [winding["name"] for winding in active_sections]
-    winding_count = len(active_sections)
+    hv = sections.get("hv", {})
+    tap_sections = active_sections[2:]
+    normal_turns = _normal_tap_turns(multi_winding, tap_sections)
+    normal_usage = _normal_tap_usage(tap_sections, normal_turns)
+    ampere_turn_value = _safe_float(lv.get("phaseCurrent"), 0.0) * _safe_float(lv.get("turnsPerPhase"), 0.0)
+    volts_per_turn = max(_safe_float(lv_results.get("revisedVoltsPerTurn"), 0.0), 0.001)
+    frequency_factor = _safe_float(getattr(multi_winding, "frequency", 50), 50.0) / 50 if _safe_float(getattr(multi_winding, "frequency", 50), 50.0) else 1.0
+    hv_main_normal_loss = _hv_main_normal_load_loss(sections, hv_results)
+    hv_main_lowest_loss = _hv_main_lowest_load_loss(sections, hv_results)
+    extra_loss_total = sum(_safe_float(section.get("loadLoss"), 0.0) for section in tap_sections)
 
-    axial_cm = sum(_vb_axial_length(section) for section in active_sections) / max(winding_count * 10, 10)
-    innermost = active_sections[0] if active_sections else {}
-    outermost = active_sections[-1] if active_sections else {}
-    radial_cm = (
-        _safe_float(outermost.get("outerDiameter"), 0.0)
-        - _safe_float(innermost.get("innerDiameter"), 0.0)
-        - (_safe_float(innermost.get("condIns"), 0.0) - _safe_float(outermost.get("condIns"), 0.0))
-    ) / 20
-
-    radial_cm = max(radial_cm, 0.001)
-    power = math.pi * axial_cm / radial_cm if radial_cm else 0.0
-    k_ratio = 1 - ((1 - math.exp(-power)) / power) if power else 1.0
-    ls_ez = axial_cm / k_ratio if k_ratio else axial_cm
-
-    insulated_heights = {
-        winding["name"]: _vb_insulated_height(winding)
-        for winding in active_sections
-    }
-    gap_terms = {}
-    diameter_terms = {}
-    for previous_section, current_section in zip(active_sections, active_sections[1:]):
-        current_name = current_section["name"]
-        gap_terms[current_name] = _vb_gap_cm(previous_section, current_section)
-        diameter_terms[current_name] = (
-            _safe_float(previous_section.get("outerDiameter"), 0.0)
-            + _safe_float(current_section.get("innerDiameter"), 0.0)
-        ) / 20
-
-    lv_ins_ht = insulated_heights.get("lv", 0.0)
-    hv_ins_ht = insulated_heights.get("hv", 0.0)
-    legacy_reference_section = active_sections[2] if len(active_sections) > 2 else hv
-    legacy_reference_name = legacy_reference_section.get("name")
-    legacy_gap_cm = gap_terms.get(legacy_reference_name, gap_terms.get("hv", 0.0))
-    legacy_ins_ht = insulated_heights.get(legacy_reference_name, hv_ins_ht)
-
-    hv_delta1_legacy = legacy_gap_cm + ((legacy_ins_ht + lv_ins_ht + hv_ins_ht) / 3)
-    ds_corse_legacy = (
-        (_safe_float(lv.get("outerDiameter"), 0.0) - _safe_float(lv.get("condIns"), 0.0)) / 10
-        + legacy_gap_cm
-        + ((hv_ins_ht - legacy_ins_ht - lv_ins_ht) / 3)
-    )
-
-    ampere_turn_value = _safe_float(hv.get("phaseCurrent"), 0.0) * _safe_float(hv.get("turnsPerPhase"), 0.0)
-    fac = 1.05 if _normalize_winding_type(lv.get("windingType")) == "HELICAL" and _normalize_winding_type(hv.get("windingType")) != "HELICAL" else 1.0
-    old_ex = (1.24 * (ampere_turn_value * hv_delta1_legacy * ds_corse_legacy * math.pow(10, -3) * fac) / max(_safe_float(lv_results.get("revisedVoltsPerTurn"), 0.0), 0.001) / max(ls_ez, 0.001))
-
-    high_side_sections = active_sections[1:]
-    high_side_turns = {
-        section["name"]: _safe_float(section.get("turnsPerPhase"), 0.0)
-        for section in high_side_sections
-    }
-    sigma_hv = max(sum(high_side_turns.values()), 1.0)
-    cumulative_turns = 0.0
-    high_side_names = [section["name"] for section in high_side_sections]
-    tail_turns = {}
-    running_turns = 0.0
-    for section_name in reversed(high_side_names):
-        running_turns += high_side_turns.get(section_name, 0.0)
-        tail_turns[section_name] = running_turns
-
-    vb_terms = {}
-    for index, section in enumerate(active_sections):
-        section_name = section["name"]
-        turns = _safe_float(section.get("turnsPerPhase"), 0.0)
-        if index == 0:
-            gamma_value = 1.0
-            beta_value = 1.0
-            delta_value = 0.0
-            ddelta_value = 0.0
+    tap_results = {}
+    for condition in ("lowest", "normal", "highest"):
+        hv_sections = _included_hv_sections(hv, tap_sections, normal_usage, condition)
+        geometry = _tap_geometry(lv, hv_sections, volts_per_turn, ampere_turn_value, frequency_factor)
+        if condition == "lowest":
+            load_loss = _safe_float(lv.get("loadLoss"), 0.0) + hv_main_lowest_loss
         else:
-            cumulative_turns += turns
-            gamma_value = _gamma(cumulative_turns, sigma_hv)
-            beta_value = (tail_turns.get(section_name, 0.0) / sigma_hv) ** 2 if tail_turns.get(section_name, 0.0) > 0 else 0.0
-            delta_value = gap_terms.get(section_name, 0.0)
-            ddelta_value = diameter_terms.get(section_name, 0.0)
-
-        alpha_value = _alpha(gamma_value) if index == 0 or turns > 1 else 0.0
-        br_value = (_safe_float(section.get("radialThickness"), 0.0) - _safe_float(section.get("condIns"), 0.0)) / 10 if index == 0 or turns > 1 else 0.0
-        d_value = _vb_mean_diameter_cm(section.get("innerDiameter"), section.get("outerDiameter")) if index == 0 or turns > 1 else 0.0
-        prod_beta_value = beta_value * delta_value * ddelta_value
-        prod_alpha_value = alpha_value * beta_value * br_value * d_value
-        vb_terms[section_name] = {
-            "gamma": gamma_value,
-            "alpha": alpha_value,
-            "beta": beta_value,
-            "delta": delta_value,
-            "br": br_value,
-            "ddelta": ddelta_value,
-            "d": d_value,
-            "prodBeta": prod_beta_value,
-            "prodAlpha": prod_alpha_value,
+            load_loss = _safe_float(lv.get("loadLoss"), 0.0) + hv_main_normal_loss + extra_loss_total
+        er_value = _tap_resistance(load_loss, getattr(multi_winding, "kVA", 0.0))
+        tap_results[condition] = {
+            **geometry,
+            "loadLoss": two_digit_decimal(load_loss),
+            "er": er_value,
+            "ek": ek(er_value, geometry["ex"]),
         }
 
-    delta_ds = sum(term["prodBeta"] + term["prodAlpha"] for term in vb_terms.values())
-
-    ex_value = two_digit_decimal((1.24 * (delta_ds * math.pow(10, -3)) * ampere_turn_value) / max(ls_ez, 0.001) / max(_safe_float(lv_results.get("revisedVoltsPerTurn"), 0.0), 0.001))
-    copper_loss = sum(_safe_float(winding.get("loadLoss"), 0.0) for winding in active_sections)
-    er_value = two_digit_decimal((copper_loss / max(_safe_float(multi_winding.kVA, 0.0), 1.0)) / 10)
-    ek_value = ek(er_value, ex_value)
+    normal_result = tap_results["normal"]
 
     return {
-        "h1": pairwise_summary.get("h1", 0.0),
-        "h2": pairwise_summary.get("h2", 0.0),
-        "ls": two_digit_decimal(ls_ez),
-        "l": two_digit_decimal(axial_cm),
-        "b": two_digit_decimal(radial_cm),
-        "kR": two_digit_decimal(k_ratio),
-        "delta": pairwise_summary.get("delta", 0.0),
-        "delta1": pairwise_summary.get("delta1", 0.0),
-        "ds": pairwise_summary.get("ds", 0.0),
-        "ex": ex_value,
-        "er": er_value,
-        "ek": ek_value,
+        "h1": normal_result["h1"],
+        "h2": normal_result["h2"],
+        "ls": normal_result["ls"],
+        "l": normal_result["l"],
+        "b": normal_result["b"],
+        "kR": normal_result["kR"],
+        "delta": normal_result["delta"],
+        "delta1": normal_result["delta1"],
+        "ds": normal_result["ds"],
+        "ex": normal_result["ex"],
+        "er": normal_result["er"],
+        "ek": normal_result["ek"],
         "breakdown": {
-            "method": "vb_multi_wdg",
+            "method": "tap_condition_multi_wdg",
             "activeWindingOrder": active_order,
             "pairs": pairwise_summary.get("breakdown", {}).get("pairs", []),
-            "totals": {
-                "loadLoss": two_digit_decimal(copper_loss),
-                "tankLossComponent": 0.0,
-                "ex": ex_value,
-                "er": er_value,
-                "ek": ek_value,
+            "selectedTap": "normal",
+            "normalTapTurnsAboveLowest": two_digit_decimal(normal_turns),
+            "normalTapUsage": {
+                section_name: {
+                    key: two_digit_decimal(value) if key != "included" else value
+                    for key, value in usage.items()
+                }
+                for section_name, usage in normal_usage.items()
             },
-            "vb": {
-                "axial": two_digit_decimal(axial_cm),
-                "radial": two_digit_decimal(radial_cm),
-                "kRatio": two_digit_decimal(k_ratio),
-                "lsEz": two_digit_decimal(ls_ez),
+            "tapConditions": tap_results,
+            "totals": {
                 "ampereTurns": two_digit_decimal(ampere_turn_value),
-                "deltaDs": two_digit_decimal(delta_ds),
-                "oldEx": two_digit_decimal(old_ex),
-                "fac": fac,
-                "hvDelta1Legacy": two_digit_decimal(hv_delta1_legacy),
-                "dsCorseLegacy": two_digit_decimal(ds_corse_legacy),
-                "termOrder": active_order,
-                "termBreakdown": {
-                    section_name: {
-                        key: two_digit_decimal(value)
-                        for key, value in term.items()
-                    }
-                    for section_name, term in vb_terms.items()
-                },
+                "loadLossAtLowest": tap_results["lowest"]["loadLoss"],
+                "loadLossAtNormal": tap_results["normal"]["loadLoss"],
+                "loadLossAtHighest": tap_results["highest"]["loadLoss"],
+                "ex": normal_result["ex"],
+                "er": normal_result["er"],
+                "ek": normal_result["ek"],
             },
         },
     }

@@ -1,5 +1,19 @@
 ## 5 WDG Technical Checkup
 
+### Current Notes
+
+- The canonical `radialGaps` keys for current requests are:
+  - `coreToLv`
+  - `lvToHv`
+  - `hvToCorse`
+  - `corseToFine`
+  - `fineToOuter`
+- Older keys such as `lvToCoarse` and `fineToCoarse` are still accepted as request aliases, but new payloads should use the canonical names above.
+- In current multi-winding behavior, HV-main load loss uses the direct formulas:
+  - `hvLoadLossAtNormal = getLoadLoss(material, hvBareWeight, hVRevisedCurrDenAtNormal, hvStrayLoss)`
+  - `hvLoadLossAtLowest = getLoadLoss(material, hvBareWeight, hVRevisedCurrDenAtLowest, hvStrayLoss)`
+- No turns-ratio multiplier is applied to HV-main load loss in multi-winding mode.
+
 ### Files
 
 - Payload: `samples/5wdg_tap_case_payload.json`

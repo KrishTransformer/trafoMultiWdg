@@ -11,7 +11,7 @@ from api.services._windingServiceSupport import (
 )
 from api.services.corseWindingService import calculate_corse_windings
 from api.services.fineWindingService import calculate_fine_windings
-from api.services.hvWindingService import calculate_hv_windings
+from api.services.hvWindingService import calculate_hv_windings, get_effective_limb_height
 from api.services.impedanceVbService import calculate_vb_multi_impedance
 from api.services.lvWindingService import calculate_lv_windings
 from api.services.outerWindingService import calculate_outer_windings
@@ -141,29 +141,23 @@ WINDING_TYPE_ALIASES = {
     "X OVER": "XOVER",
     "X-OVER": "XOVER",
 }
-COIL_SCALE_GAP_FIELDS = {
-    "3 Wdg (LV, HV-Main and Outer)": (("outer", "hvToOuter"),),
+COIL_SCALE_GAP_LAYOUTS = {
+    "3 Wdg (LV, HV-Main and Outer)": (
+        {"winding": "outer", "gapField": "hvToOuter", "inner": "hv", "outer": "outer"},
+    ),
     "4 Wdg (LV, HV-Main, Corse and Outer)": (
-        ("corse", "lvToCoarse"),
-        ("outer", "coarseToOuter"),
+        {"winding": "corse", "gapField": "hvToCorse", "inner": "hv", "outer": "corse"},
+        {"winding": "outer", "gapField": "corseToOuter", "inner": "corse", "outer": "outer"},
     ),
     "4 Wdg (LV, HV-Main, Fine and Outer)": (
-        ("fine", "lvToFine"),
-        ("outer", "fineToOuter"),
+        {"winding": "fine", "gapField": "hvToFine", "inner": "hv", "outer": "fine"},
+        {"winding": "outer", "gapField": "fineToOuter", "inner": "fine", "outer": "outer"},
     ),
     "5 Wdg (LV, HV-Main, Corse, Fine and Outer)": (
-        ("corse", "lvToCoarse"),
-        ("fine", "fineToCoarse"),
-        ("outer", "fineToOuter"),
+        {"winding": "corse", "gapField": "hvToCorse", "inner": "hv", "outer": "corse"},
+        {"winding": "fine", "gapField": "corseToFine", "inner": "corse", "outer": "fine"},
+        {"winding": "outer", "gapField": "fineToOuter", "inner": "fine", "outer": "outer"},
     ),
-}
-GAP_INSULATION_CONNECTIONS = {
-    "hvToOuter": ("hv", "outer"),
-    "lvToCoarse": ("lv", "corse"),
-    "coarseToOuter": ("corse", "outer"),
-    "lvToFine": ("lv", "fine"),
-    "fineToCoarse": ("corse", "fine"),
-    "fineToOuter": ("fine", "outer"),
 }
 EXTRA_WINDING_SERVICE_MAP = {
     "corse": calculate_corse_windings,
@@ -264,6 +258,10 @@ def _round_dimension(value):
     return int(round(safe_float(value, 0.0)))
 
 
+def _get_gap_layout(selection):
+    return COIL_SCALE_GAP_LAYOUTS.get(selection, ())
+
+
 def _build_extra_winding_results(multi_winding, selection, hv_source, section_allocations, previous_geometry):
     radial_gaps = getattr(multi_winding, "radialGaps", None)
     allow_turns_fallback = _get_total_taps(multi_winding) <= 0
@@ -273,7 +271,9 @@ def _build_extra_winding_results(multi_winding, selection, hv_source, section_al
         "outer": None,
     }
 
-    for winding_name, gap_field in COIL_SCALE_GAP_FIELDS.get(selection, ()):
+    for gap_layout in _get_gap_layout(selection):
+        winding_name = gap_layout["winding"]
+        gap_field = gap_layout["gapField"]
         seed_dimensions = build_seed_dimensions(previous_geometry, gap_field, radial_gaps)
         service = EXTRA_WINDING_SERVICE_MAP[winding_name]
         result = service(
@@ -302,6 +302,7 @@ def _build_coil_dimension_scale(
     lv_results,
     hv_results,
     extra_winding_results,
+    limb_height=None,
 ):
     radial_build = [
         {
@@ -325,7 +326,8 @@ def _build_coil_dimension_scale(
     ]
 
     previous_outer_diameter = safe_float(hv_results["hvOd"] if "hvOd" in hv_results else hv_results["outerDiameter"], 0.0)
-    for winding_name, _gap_field in COIL_SCALE_GAP_FIELDS.get(selection, ()):
+    for gap_layout in _get_gap_layout(selection):
+        winding_name = gap_layout["winding"]
         result = extra_winding_results.get(winding_name) or {}
         seed_dimensions = result.get("seedDimensions", {})
         inner_diameter = safe_float(result.get("estimatedInnerDiameter"), 0.0)
@@ -352,7 +354,8 @@ def _build_coil_dimension_scale(
     scaled_outer_od = _round_dimension(previous_outer_diameter)
     scaled_gap = safe_float(hv_results["hvHvGap"], 0.0)
     scaled_center_distance = _round_dimension(previous_outer_diameter + scaled_gap)
-    scaled_active_part_height = _round_dimension((2 * lv_results["coreDiameter"]) + lv_results["windowHeight"])
+    finalized_limb_height = lv_results["windowHeight"] if limb_height is None else limb_height
+    scaled_active_part_height = _round_dimension((2 * lv_results["coreDiameter"]) + finalized_limb_height)
     scaled_active_part_length = _round_dimension((2 * scaled_center_distance) + previous_outer_diameter)
     winding_dimensions = {
         winding_name: None
@@ -433,6 +436,20 @@ def _get_supported_taps_for_winding(multi_winding, winding_name, turns_per_tap):
 
 def _build_tap_turns(tap_count, turns_per_tap):
     return two_digit_decimal(safe_float(tap_count, 0.0) * safe_float(turns_per_tap, 0.0))
+
+
+def _allocate_from_turn_share(total_turns, total_taps, share, volts_per_turn, turns_per_tap):
+    allocated_turns = two_digit_decimal(safe_float(total_turns, 0.0) * safe_float(share, 0.0))
+    allocated_taps = two_digit_decimal(safe_float(total_taps, 0.0) * safe_float(share, 0.0))
+    inferred_turns_per_tap = safe_float(turns_per_tap, 0.0)
+    if inferred_turns_per_tap <= 0 and safe_float(total_taps, 0.0) > 0:
+        inferred_turns_per_tap = two_digit_decimal(safe_float(total_turns, 0.0) / safe_float(total_taps, 1.0))
+    return _build_section_allocation(
+        turns=allocated_turns,
+        volts_per_phase=_vb_int(allocated_turns * safe_float(volts_per_turn, 0.0)),
+        taps=allocated_taps,
+        turns_per_tap=inferred_turns_per_tap,
+    )
 
 
 def _allocate_outer_first_taps(multi_winding, turns_per_tap):
@@ -519,64 +536,67 @@ def _get_high_side_distribution(multi_winding, lv_results, hv_results):
     if selection == DEFAULT_WINDING_SELECTION:
         return allocations
 
+    tap_range_turns = max(highest_turns - lowest_turns, 0.0)
+
     if selection == "3 Wdg (LV, HV-Main and Outer)":
-        outer_turns = _build_tap_turns(total_taps, turns_per_tap)
-        allocations["outer"] = _build_section_allocation(
-            turns=outer_turns,
-            volts_per_phase=_vb_int(outer_turns * volts_per_turn),
-            taps=total_taps,
-            turns_per_tap=turns_per_tap,
+        allocations["outer"] = _allocate_from_turn_share(
+            tap_range_turns,
+            total_taps,
+            1.0,
+            volts_per_turn,
+            turns_per_tap,
         )
     elif selection == "4 Wdg (LV, HV-Main, Corse and Outer)":
-        outer_taps, corse_taps = _allocate_outer_first_taps(multi_winding, turns_per_tap)
-        outer_turns = _build_tap_turns(outer_taps, turns_per_tap)
-        corse_turns = _build_tap_turns(corse_taps, turns_per_tap)
-        corse_volts = _vb_int(corse_turns * volts_per_turn)
-        allocations["corse"] = _build_section_allocation(
-            turns=corse_turns,
-            volts_per_phase=corse_volts,
-            taps=corse_taps,
-            turns_per_tap=turns_per_tap,
+        allocations["corse"] = _allocate_from_turn_share(
+            tap_range_turns,
+            total_taps,
+            0.5,
+            volts_per_turn,
+            turns_per_tap,
         )
-        allocations["outer"] = _build_section_allocation(
-            turns=outer_turns,
-            volts_per_phase=_vb_int(outer_turns * volts_per_turn),
-            taps=outer_taps,
-            turns_per_tap=turns_per_tap,
+        allocations["outer"] = _allocate_from_turn_share(
+            tap_range_turns,
+            total_taps,
+            0.5,
+            volts_per_turn,
+            turns_per_tap,
         )
     elif selection == "4 Wdg (LV, HV-Main, Fine and Outer)":
-        outer_taps, fine_taps = _allocate_outer_first_taps(multi_winding, turns_per_tap)
-        outer_turns = _build_tap_turns(outer_taps, turns_per_tap)
-        fine_turns = _build_tap_turns(fine_taps, turns_per_tap)
-        fine_volts = _vb_int(fine_turns * volts_per_turn)
-        allocations["fine"] = _build_section_allocation(
-            turns=fine_turns,
-            volts_per_phase=fine_volts,
-            taps=fine_taps,
-            turns_per_tap=turns_per_tap,
+        allocations["fine"] = _allocate_from_turn_share(
+            tap_range_turns,
+            total_taps,
+            0.5,
+            volts_per_turn,
+            turns_per_tap,
         )
-        allocations["outer"] = _build_section_allocation(
-            turns=outer_turns,
-            volts_per_phase=_vb_int(outer_turns * volts_per_turn),
-            taps=outer_taps,
-            turns_per_tap=turns_per_tap,
+        allocations["outer"] = _allocate_from_turn_share(
+            tap_range_turns,
+            total_taps,
+            0.5,
+            volts_per_turn,
+            turns_per_tap,
         )
     elif selection == "5 Wdg (LV, HV-Main, Corse, Fine and Outer)":
-        outer_taps, fine_taps = _allocate_outer_first_taps(multi_winding, turns_per_tap)
-        outer_turns = _build_tap_turns(outer_taps, turns_per_tap)
-        fine_turns = _build_tap_turns(fine_taps, turns_per_tap)
-        fine_volts = _vb_int(fine_turns * volts_per_turn)
-        allocations["fine"] = _build_section_allocation(
-            turns=fine_turns,
-            volts_per_phase=fine_volts,
-            taps=fine_taps,
-            turns_per_tap=turns_per_tap,
+        allocations["corse"] = _allocate_from_turn_share(
+            tap_range_turns,
+            total_taps,
+            0.5,
+            volts_per_turn,
+            turns_per_tap,
         )
-        allocations["outer"] = _build_section_allocation(
-            turns=outer_turns,
-            volts_per_phase=_vb_int(outer_turns * volts_per_turn),
-            taps=outer_taps,
-            turns_per_tap=turns_per_tap,
+        allocations["fine"] = _allocate_from_turn_share(
+            tap_range_turns,
+            total_taps,
+            0.25,
+            volts_per_turn,
+            turns_per_tap,
+        )
+        allocations["outer"] = _allocate_from_turn_share(
+            tap_range_turns,
+            total_taps,
+            0.25,
+            volts_per_turn,
+            turns_per_tap,
         )
 
     _apply_section_allocation_fallbacks(multi_winding, allocations, volts_per_turn)
@@ -606,12 +626,34 @@ def _build_hv_main_results(multi_winding, lv_results, hv_results, allocation):
         allocated_voltage=allocation.get("voltsPerPhase", safe_float(hv_results.get("hvVoltsPerPhase"), 0.0)),
         seed_dimensions=hv_seed_dimensions,
         dry_type=bool(getattr(multi_winding, "dryType", False)),
+        ambient_temp=getattr(multi_winding, "ambientTemp", 50) or 50,
+        winding_temp=getattr(multi_winding, "windingTemp", 55) or 55,
     )
     section_results["hvTurnsPerTap"] = hv_results.get("hvTurnsPerTap", 0.0)
     section_results["hvHighestTapVoltage"] = hv_results.get("hvHighestTapVoltage", 0.0)
     section_results["hvLowestTapVoltage"] = hv_results.get("hvLowestTapVoltage", 0.0)
     section_results["tapVoltages"] = hv_results.get("tapVoltages")
     section_results["tapCurrent"] = hv_results.get("tapCurrent")
+    section_results["hvCurrentAtLowest"] = hv_results.get("hvCurrentAtLowest", 0.0)
+    section_results["hVRevisedCurrDenAtNormal"] = hv_results.get("hVRevisedCurrDenAtNormal", 0.0)
+    section_results["hVRevisedCurrDenAtLowest"] = hv_results.get("hVRevisedCurrDenAtLowest", 0.0)
+    section_results["hvLoadLossAtNormal"] = hv_results.get("hvLoadLossAtNormal", 0.0)
+    section_results["hvLoadLossAtLowest"] = hv_results.get("hvLoadLossAtLowest", 0.0)
+    section_results["hvDiscDuctsSize"] = hv_results.get("hvDiscDuctsSize", 0.0)
+    section_results["hvNoOfSpacers"] = hv_results.get("hvNoOfSpacers", section_results.get("noOfSpacers", 0))
+    section_results["hvWidthOfSpacer"] = hv_results.get("hvWidthOfSpacer", section_results.get("widthOfSpacer", 0))
+    section_results["hvExcessTurns"] = hv_results.get("hvExcessTurns", section_results.get("excessTurns", 0))
+    section_results["hvSpacersToBeRemoved"] = hv_results.get("hvSpacersToBeRemoved", section_results.get("spacersToBeRemoved", 0))
+    section_results["hvFullDisc"] = hv_results.get("hvFullDisc", section_results.get("fullDisc", 0))
+    section_results["hvHalfDisc"] = hv_results.get("hvHalfDisc", section_results.get("halfDisc", 0))
+    section_results["hvPartialDisc"] = hv_results.get("hvPartialDisc", section_results.get("partialDisc", 0))
+    section_results["hvBalanceSpacersInLastDisc"] = hv_results.get(
+        "hvBalanceSpacersInLastDisc",
+        section_results.get("balanceSpacersInLastDisc", 0),
+    )
+    section_results["hvDiscArrangement"] = hv_results.get("hvDiscArrangement", section_results.get("discArrangement", ""))
+    section_results["coreLoss"] = hv_results.get("coreLoss", 0.0)
+    section_results["lvHvGap"] = hv_results.get("lvHvGap", 0.0)
     section_results["hvVoltsPerPhase"] = allocation.get("voltsPerPhase", hv_results.get("hvVoltsPerPhase", 0.0))
     section_results["sourceHvVoltsPerPhase"] = hv_results.get("hvVoltsPerPhase", 0.0)
     section_results["hvHvGap"] = hv_results.get("hvHvGap", 0.0)
@@ -1061,10 +1103,14 @@ def _apply_section_results_to_model(winding, section_results):
         section_results.get("noOfConductors", 0),
     )
     winding.turnsLayers = (
-        f'{seed_dimensions.get("previousWinding", "").upper()} -> '
-        f'{seed_dimensions.get("gapField", "")} -> '
-        f'{section_results.get("windingName", "").upper()}'
-    ).strip(" ->")
+        str(section_results.get("discArrangement", ""))
+        if section_results.get("windingType") == "DISC"
+        else (
+            f'{seed_dimensions.get("previousWinding", "").upper()} -> '
+            f'{seed_dimensions.get("gapField", "")} -> '
+            f'{section_results.get("windingName", "").upper()}'
+        ).strip(" ->")
+    )
     winding.conductorSizes = _conductor_size_label(
         section_results.get("breadth", 0.0),
         section_results.get("height", 0.0),
@@ -1125,15 +1171,14 @@ def _build_insulation_payload(multi_winding, coil_dimensions):
         },
     }
 
-    for winding_name, gap_field in COIL_SCALE_GAP_FIELDS.get(multi_winding.windings, ()):
-        connection = GAP_INSULATION_CONNECTIONS.get(gap_field)
-        if not connection:
-            continue
+    for gap_layout in _get_gap_layout(multi_winding.windings):
+        winding_name = gap_layout["winding"]
+        gap_field = gap_layout["gapField"]
         gap_value = (winding_dimensions.get(winding_name) or {}).get("gap")
         insulation[gap_field] = _gap_insulation_label(
             multi_winding,
-            connection[0],
-            connection[1],
+            gap_layout["inner"],
+            gap_layout["outer"],
             gap_value or 0,
         )
 
@@ -1192,7 +1237,7 @@ def _with_named_volts_per_phase(payload, voltage_field_name, voltage_value):
 
 
 def _build_impedance_response(impedance_summary):
-    return {
+    response = {
         "h1": impedance_summary.get("h1", 0.0),
         "h2": impedance_summary.get("h2", 0.0),
         "ls": impedance_summary.get("ls", 0.0),
@@ -1206,6 +1251,16 @@ def _build_impedance_response(impedance_summary):
         "er": impedance_summary.get("er", 0.0),
         "ek": impedance_summary.get("ek", 0.0),
     }
+    tap_conditions = (
+        impedance_summary.get("breakdown", {}).get("tapConditions", {})
+        if isinstance(impedance_summary.get("breakdown"), dict)
+        else {}
+    )
+    if tap_conditions:
+        response["lowestTap"] = tap_conditions.get("lowest", {})
+        response["normalTap"] = tap_conditions.get("normal", {})
+        response["highestTap"] = tap_conditions.get("highest", {})
+    return response
 
 
 def calculate_circ_wdg(multi_winding):
@@ -1221,6 +1276,12 @@ def calculate_circ_wdg(multi_winding):
 
     lv_results = calculate_lv_windings(multi_winding)
     raw_hv_results = calculate_hv_windings(multi_winding, lv_results)
+    effective_limb_height = get_effective_limb_height(
+        lv_results["windowHeight"],
+        raw_hv_results["hvWindingLength"],
+        raw_hv_results["hvEndClearance"],
+        lv_results["permaWoodRing"],
+    )
     high_side_distribution = _get_high_side_distribution(multi_winding, lv_results, raw_hv_results)
     hv_results = _build_hv_main_results(
         multi_winding,
@@ -1296,6 +1357,7 @@ def calculate_circ_wdg(multi_winding):
         lv_results,
         hv_results_for_calc,
         extra_winding_results,
+        effective_limb_height,
     )
     impedance_summary = _build_impedance_summary(
         multi_winding,
@@ -1335,7 +1397,7 @@ def calculate_circ_wdg(multi_winding):
     coil_dimensions.activePartSize = coil_dimension_scale["activePartSize"]
 
     core.coreDia = lv_results["coreDiameter"]
-    core.limbHt = lv_results["windowHeight"]
+    core.limbHt = effective_limb_height
     core.area = lv_results["netArea"]
     core.cenDist = coil_dimension_scale["centerDistance"]
     core.fluxDensity = lv_results["revisedFluxDensity"]
@@ -1346,7 +1408,7 @@ def calculate_circ_wdg(multi_winding):
         getattr(core, "wKgGrade", None),
     )
     recomputed_center_distance = get_center_distance(coil_dimension_scale["outermostOD"], raw_hv_results["hvHvGap"])
-    recomputed_core_length = get_core_length(lv_results["coreDiameter"], lv_results["windowHeight"], recomputed_center_distance)
+    recomputed_core_length = get_core_length(lv_results["coreDiameter"], effective_limb_height, recomputed_center_distance)
     recomputed_core_weight = get_core_weight(recomputed_core_length, lv_results["netArea"])
     recomputed_core_loss = get_core_loss(
         recomputed_core_weight,
@@ -1396,12 +1458,12 @@ def calculate_circ_wdg(multi_winding):
         "lVCurrentDensity": multi_winding.lvCurrentDensity,
         "hVCurrentDensity": multi_winding.hvCurrentDensity,
         "ampereTurns": ampere_turn_value,
-        "h1": h1,
-        "h2": h2,
-        "ls": ls_values[0],
-        "l": ls_values[1],
-        "b": ls_values[2],
-        "kR": ls_values[3],
+        "h1": impedance_summary["h1"],
+        "h2": impedance_summary["h2"],
+        "ls": impedance_summary["ls"],
+        "l": impedance_summary["l"],
+        "b": impedance_summary["b"],
+        "kR": impedance_summary["kR"],
         "delta": impedance_summary["delta"],
         "delta1": impedance_summary["delta1"],
         "ds": impedance_summary["ds"],
@@ -1409,26 +1471,6 @@ def calculate_circ_wdg(multi_winding):
         "er": er_value,
         "ek": ek_value,
     }
-
-    # kW55 is temporarily disabled while we validate the remaining multi-winding flow.
-    # if multi_winding.windings == DEFAULT_WINDING_SELECTION:
-    #     kw55 = raw_hv_results.get("kW55")
-    # else:
-    #     winding_load_losses, winding_gradients = _collect_multi_winding_thermal_inputs(
-    #         lv_results,
-    #         hv_winding_model,
-    #         corse_winding_model,
-    #         fine_winding_model,
-    #         outer_winding_model,
-    #     )
-    #     kw55 = _build_multi_winding_kw55(
-    #         winding_load_losses,
-    #         winding_gradients,
-    #         recomputed_core_loss,
-    #         recomputed_tank_loss,
-    #     )
-    #     raw_hv_results["kW55"] = kw55
-    #     hv_results["kW55"] = kw55
 
     losses_at_50 = get_loss_at_50_percent(
         recomputed_core_loss,
@@ -1474,10 +1516,25 @@ def calculate_circ_wdg(multi_winding):
         recomputed_tank_loss,
         high_side_distribution,
     )
+    kw55 = safe_float(tank_and_oil.get("kw55"), 0.0)
+    raw_hv_results["kW55"] = kw55
+    hv_results["kW55"] = kw55
+    raw_hv_results["coreLength"] = recomputed_core_length
+    raw_hv_results["coreWeight"] = recomputed_core_weight
+    raw_hv_results["coreLoss"] = recomputed_core_loss
+    raw_hv_results["activePartSize"] = coil_dimensions.activePartSize
+    hv_results["coreLength"] = recomputed_core_length
+    hv_results["coreWeight"] = recomputed_core_weight
+    hv_results["coreLoss"] = recomputed_core_loss
+    hv_results["activePartSize"] = coil_dimensions.activePartSize
+    hv_winding_response["coreLength"] = recomputed_core_length
+    hv_winding_response["coreWeight"] = recomputed_core_weight
     hv_winding_response["tankLoss"] = tank_and_oil["tankLoss"]
     hv_winding_response["totalLoadLoss"] = total_load_loss
-    # hv_winding_response["kW55"] = kw55
-    # common["kW55"] = kw55
+    hv_winding_response["kW55"] = kw55
+    hv_winding_response["coreLoss"] = recomputed_core_loss
+    hv_winding_response["activePartSize"] = coil_dimensions.activePartSize
+    common["kW55"] = kw55
 
     return {
         "selectedCode": WINDING_SELECTION_CODES[multi_winding.windings],
@@ -1493,6 +1550,7 @@ def calculate_circ_wdg(multi_winding):
             "hvCurrentPerPhase": hv_winding_model.phaseCurrent,
             "lvEndClearance": lv_results["lvEndClearance"],
             "hvEndClearance": hv_winding_model.endClearances,
+            "coreLoss": recomputed_core_loss,
             "phaseVoltages": phase_voltage_division,
             "phaseVoltageDivision": phase_voltage_division,
             "lvWinding": lv_winding_response,
@@ -1501,7 +1559,7 @@ def calculate_circ_wdg(multi_winding):
             "fineWinding": fine_results,
             "outerWinding": outer_results,
             "windingTypes": _build_winding_type_payload(multi_winding),
-            # "kW55": kw55,
+            "kW55": kw55,
             "common": common,
             "core": {
                 "coreDia": core.coreDia,
@@ -1511,6 +1569,7 @@ def calculate_circ_wdg(multi_winding):
                 "fluxDensity": core.fluxDensity,
                 "wKgGrade": core.wKgGrade,
                 "coreWeight": core.coreWeight,
+                "coreLoss": recomputed_core_loss,
                 "coreType": core.coreType,
                 "coreMaterial": core.coreMaterial,
             },

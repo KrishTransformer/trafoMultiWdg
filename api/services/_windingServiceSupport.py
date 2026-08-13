@@ -15,6 +15,8 @@ from api.services.windingFormulae import (
     get_conductor_cross_section,
     get_disc_radial_thickness,
     get_disc_winding_length,
+    get_duct_size,
+    get_gradient_limit,
     get_height,
     get_height_insulated,
     get_hv_gradient,
@@ -26,8 +28,12 @@ from api.services.windingFormulae import (
     get_r26,
     get_r75,
     get_revised_conductor_cross_section,
+    get_spacers_and_width,
     get_stray_loss,
     get_stray_loss_for_disc,
+    get_psi,
+    get_rw,
+    get_v0,
     get_wire_length,
 )
 
@@ -55,6 +61,12 @@ def _positive_or_fallback(value, fallback):
     return safe_float(fallback, 0.0)
 
 
+def resolve_axial_parallel_for_winding(winding_type, axial_parallel):
+    if _normalize_winding_type(winding_type) == "DISC":
+        return 1
+    return max(1, int(round(safe_float(axial_parallel, 1.0))))
+
+
 def seed_section_winding(winding, hv_source, winding_type=None):
     winding = safe_winding(winding)
     winding_type = _normalize_winding_type(winding_type)
@@ -70,6 +82,7 @@ def seed_section_winding(winding, hv_source, winding_type=None):
         winding.radialParallelCond = int(round(safe_float(hv_source.get("hvRadialParallelConductors"), 1.0)))
     if winding.axialParallelCond is None:
         winding.axialParallelCond = int(round(safe_float(hv_source.get("hvAxialParallelConductors"), 1.0)))
+    winding.axialParallelCond = resolve_axial_parallel_for_winding(winding_type, winding.axialParallelCond)
     if winding.condBreadth is None and winding_type != "DISC":
         winding.condBreadth = safe_float(hv_source.get("hvBreadth"), 0.0)
     if winding.condHeight is None and winding_type != "DISC":
@@ -191,6 +204,64 @@ def _next_even_integer(value):
     return even_value
 
 
+def build_disc_arrangement(winding_id, no_of_discs, turns_per_disc, total_turns):
+    no_of_discs = max(int(round(safe_float(no_of_discs, 0.0))), 0)
+    turns_per_disc = max(int(math.ceil(safe_float(turns_per_disc, 0.0))), 0)
+    total_turns = max(int(round(safe_float(total_turns, 0.0))), 0)
+    if no_of_discs <= 0:
+        return {
+            "noOfSpacers": 0,
+            "widthOfSpacer": 0,
+            "excessTurns": 0,
+            "spacersToBeRemoved": 0,
+            "fullDisc": 0,
+            "halfDisc": 0,
+            "partialDisc": 0,
+            "balanceSpacersInLastDisc": 0,
+            "discArrangement": "",
+        }
+
+    total_turns_possible = turns_per_disc * no_of_discs
+    excess_turns = max(total_turns_possible - total_turns, 0)
+    if excess_turns > 0:
+        no_of_spacers, width_of_spacer = get_spacers_and_width(winding_id, no_of_discs, excess_turns)
+    else:
+        no_of_spacers, width_of_spacer = 0, 0
+
+    spacers_to_be_removed = max((no_of_spacers * excess_turns) - no_of_discs, 0) if no_of_spacers > 0 else 0
+    half_disc = 0
+    if spacers_to_be_removed > 0 and no_of_spacers > 2:
+        removable_per_half_disc = max(int((no_of_spacers / 2) - 1), 1)
+        half_disc = int(math.floor(spacers_to_be_removed / removable_per_half_disc))
+        spacers_to_be_removed -= half_disc * removable_per_half_disc
+
+    if spacers_to_be_removed == 0:
+        partial_disc = 0
+        full_disc = no_of_discs - half_disc
+        balance_spacers_in_last_disc = 0
+    else:
+        partial_disc = 1
+        full_disc = no_of_discs - half_disc - partial_disc
+        balance_spacers_in_last_disc = max(no_of_spacers - spacers_to_be_removed - 1, 0)
+
+    partial_disc_str = (
+        f" + {partial_disc}({balance_spacers_in_last_disc}/{no_of_spacers})"
+        if partial_disc > 0 and no_of_spacers > 0
+        else ""
+    )
+    return {
+        "noOfSpacers": no_of_spacers,
+        "widthOfSpacer": width_of_spacer,
+        "excessTurns": excess_turns,
+        "spacersToBeRemoved": spacers_to_be_removed,
+        "fullDisc": full_disc,
+        "halfDisc": half_disc,
+        "partialDisc": partial_disc,
+        "balanceSpacersInLastDisc": balance_spacers_in_last_disc,
+        "discArrangement": f"{full_disc}F + {half_disc}H{partial_disc_str}",
+    }
+
+
 def _select_disc_conductor_geometry(
     turns,
     winding_length,
@@ -224,10 +295,10 @@ def _select_disc_conductor_geometry(
     original_no_of_discs = no_of_discs
     turns_per_disc_rough = turns / max(no_of_discs, 1)
 
-    while two_digit_decimal_part(turns_per_disc_rough) < 0.7:
+    while two_digit_decimal_part(turns_per_disc_rough) < 0.7 or two_digit_decimal_part(turns_per_disc_rough) >= 0.95:
         no_of_discs += 2
         turns_per_disc_rough = turns / max(no_of_discs, 1)
-        if two_digit_decimal_part(turns_per_disc_rough) >= 0.7:
+        if 0.68 <= two_digit_decimal_part(turns_per_disc_rough) < 0.95:
             break
 
     turns_per_disc = int(math.ceil(turns_per_disc_rough))
@@ -242,10 +313,13 @@ def _select_disc_conductor_geometry(
         if breadth < 5 and height > 1.7:
             no_of_discs = original_no_of_discs
             turns_per_disc_rough = turns / max(no_of_discs, 1)
-            while no_of_discs > 2 and two_digit_decimal_part(turns_per_disc_rough) < 0.7:
+            while no_of_discs > 2 and (
+                two_digit_decimal_part(turns_per_disc_rough) < 0.7
+                or two_digit_decimal_part(turns_per_disc_rough) >= 0.95
+            ):
                 no_of_discs -= 2
                 turns_per_disc_rough = turns / max(no_of_discs, 1)
-                if two_digit_decimal_part(turns_per_disc_rough) >= 0.7:
+                if 0.68 <= two_digit_decimal_part(turns_per_disc_rough) < 0.95:
                     break
 
             turns_per_disc = int(math.ceil(turns_per_disc_rough))
@@ -275,6 +349,8 @@ def build_hv_section_results(
     allocated_voltage,
     seed_dimensions,
     dry_type,
+    ambient_temp=50,
+    winding_temp=55,
     current_density_override=None,
     allow_turns_fallback=True,
 ):
@@ -288,6 +364,70 @@ def build_hv_section_results(
     allocated_turns = safe_float(allocated_turns, 0.0)
     if allocated_turns <= 0 and allow_turns_fallback:
         allocated_turns = safe_float(getattr(winding, "turnsPerPhase", None), 0.0)
+    previous_outer_diameter = safe_float(seed_dimensions.get("previousOuterDiameter"), 0.0)
+    gap_to_previous = safe_float(seed_dimensions.get("gapToPrevious"), 0.0)
+    inner_diameter = previous_outer_diameter + (2 * gap_to_previous)
+    if winding_type == "DISC" and allocated_turns <= 0:
+        return {
+            "windingName": section_name,
+            "windingType": winding_type,
+            "implemented": True,
+            "status": "calculated",
+            "seedDimensions": {
+                **seed_dimensions,
+                "estimatedInnerDiameter": inner_diameter,
+            },
+            "turnsPerPhase": 0.0,
+            "voltsPerPhase": safe_float(allocated_voltage, 0.0),
+            "phaseCurrent": 0.0,
+            "currentDensity": 0.0,
+            "condCrossSec": 0.0,
+            "conductorCrossSection": 0.0,
+            "conductorInsulation": safe_float(winding.condInsulation, safe_float(hv_source.get("hvConductorInsulation"), 0.0)),
+            "breadth": 0.0,
+            "height": 0.0,
+            "breadthInsulated": 0.0,
+            "heightInsulated": 0.0,
+            "turnsPerLayer": 0.0,
+            "noOfLayers": 0.0,
+            "windingLength": 0.0,
+            "endClearance": safe_float(winding.endClearances, safe_float(hv_source.get("hvEndClearance"), 0.0)),
+            "radialParallelCond": 0,
+            "axialParallelCond": 0,
+            "noOfConductors": 0,
+            "interLayerInsulation": 0.0,
+            "ducts": 0,
+            "ductSize": 0,
+            "radialThickness": 0.0,
+            "innerDiameter": inner_diameter,
+            "outerDiameter": inner_diameter,
+            "estimatedRadialThickness": 0.0,
+            "estimatedInnerDiameter": inner_diameter,
+            "estimatedOuterDiameter": inner_diameter,
+            "estimatedWindingLength": 0.0,
+            "lmt": 0.0,
+            "wireLength": 0.0,
+            "r75": 0.0,
+            "r26": 0.0,
+            "bareWeight": 0.0,
+            "insulatedWeight": 0.0,
+            "strayLoss": 0.0,
+            "loadLoss": 0.0,
+            "gradient": 0.0,
+            "discDuctSize": safe_float(hv_source.get("hvDiscDuctsSize"), 0.0),
+            "noOfSpacers": 0,
+            "widthOfSpacer": 0,
+            "excessTurns": 0,
+            "spacersToBeRemoved": 0,
+            "fullDisc": 0,
+            "halfDisc": 0,
+            "partialDisc": 0,
+            "balanceSpacersInLastDisc": 0,
+            "discArrangement": "",
+            "isConductorRound": False,
+            "isEnamel": bool(winding.isEnamel),
+            "model": serialize_winding_inputs(winding),
+        }
     turn_base = max(safe_float(hv_source.get("hvTurnsAtHighest"), 0.0), 1.0)
     turn_share = allocated_turns / turn_base if turn_base else 0.0
 
@@ -312,7 +452,7 @@ def build_hv_section_results(
         else int(round(safe_float(hv_source.get("hvAxialParallelConductors"), 1.0)))
     )
     radial_parallel = max(1, radial_parallel)
-    axial_parallel = max(1, axial_parallel)
+    axial_parallel = resolve_axial_parallel_for_winding(winding_type, axial_parallel)
     no_of_conductors = radial_parallel * axial_parallel
     target_total_cond_cross_section = (
         get_conductor_cross_section(current_per_phase, target_current_density)
@@ -471,9 +611,11 @@ def build_hv_section_results(
             is_round,
         )
 
-    previous_outer_diameter = safe_float(seed_dimensions.get("previousOuterDiameter"), 0.0)
-    gap_to_previous = safe_float(seed_dimensions.get("gapToPrevious"), 0.0)
-    inner_diameter = previous_outer_diameter + (2 * gap_to_previous)
+    disc_arrangement = (
+        build_disc_arrangement(inner_diameter, turns_per_layer, number_of_layers, allocated_turns)
+        if winding_type == "DISC"
+        else None
+    )
     outer_diameter = get_od(inner_diameter, radial_thickness)
     lmt = get_lmt(inner_diameter, outer_diameter)
     wire_length = get_wire_length(lmt, allocated_turns, 3, no_of_conductors)
@@ -488,7 +630,63 @@ def build_hv_section_results(
         is_enamel,
     )
     load_loss = next_integer(get_load_loss(material, bare_weight, current_density, stray_loss))
-    gradient = get_hv_gradient(load_loss, (no_of_ducts * 2) + 2, winding_length, 0, lmt, dry_type)
+    if winding_type == "DISC":
+        if allocated_turns > 0 and load_loss > 0 and cross_sec_per_conductor > 0:
+            v0 = get_v0(current_density, cross_sec_per_conductor, stray_loss, height_insulated, winding_temp, ambient_temp)
+            psi = get_psi(breadth_insulated, radial_thickness, duct_thickness, no_of_ducts)
+            if v0 > 0 and psi > 0:
+                rw = get_rw(v0, psi, conductor_insulation)
+                gradient = one_digit_decimal(v0 * psi * rw)
+            else:
+                gradient = 0.0
+        else:
+            gradient = 0.0
+
+        gradient_limit = get_gradient_limit(dry_type, "CLASS_B")
+        if winding.ducts is None and allocated_turns > 0:
+            while gradient >= gradient_limit:
+                if no_of_ducts > 1:
+                    break
+                no_of_ducts += 1
+                duct_thickness = get_duct_size(
+                    0.0,
+                    399.0 if base_winding_length <= 499.0 else 499.0,
+                    winding.ductSize if winding.ductSize is not None else duct_thickness,
+                    dry_type,
+                )
+                radial_thickness = get_disc_radial_thickness(
+                    height,
+                    radial_parallel,
+                    conductor_insulation,
+                    INSULATION_EXPANSION,
+                    number_of_layers,
+                    no_of_ducts,
+                    duct_thickness,
+                )
+                outer_diameter = get_od(inner_diameter, radial_thickness)
+                lmt = get_lmt(inner_diameter, outer_diameter)
+                wire_length = get_wire_length(lmt, allocated_turns, 3, no_of_conductors)
+                bare_weight = get_bare_weight(lmt, allocated_turns, total_cond_cross_section, material)
+                insulated_weight = get_insulated_weight(
+                    breadth_insulated,
+                    height_insulated,
+                    breadth,
+                    height,
+                    material,
+                    bare_weight,
+                    is_enamel,
+                )
+                load_loss = next_integer(get_load_loss(material, bare_weight, current_density, stray_loss))
+                v0 = get_v0(current_density, cross_sec_per_conductor, stray_loss, height_insulated, winding_temp, ambient_temp)
+                psi = get_psi(breadth_insulated, radial_thickness, duct_thickness, no_of_ducts)
+                if v0 > 0 and psi > 0:
+                    rw = get_rw(v0, psi, conductor_insulation)
+                    gradient = one_digit_decimal(v0 * psi * rw)
+                else:
+                    gradient = 0.0
+                    break
+    else:
+        gradient = get_hv_gradient(load_loss, (no_of_ducts * 2) + 2, winding_length, 0, lmt, dry_type)
     r75 = get_r75(material, lmt, allocated_turns, total_cond_cross_section) if total_cond_cross_section > 0 else 0.0
     r26 = get_r26(r75, material) if r75 else 0.0
 
@@ -538,6 +736,16 @@ def build_hv_section_results(
         "strayLoss": stray_loss,
         "loadLoss": load_loss,
         "gradient": gradient,
+        "discDuctSize": disc_duct_size if winding_type == "DISC" else 0,
+        "noOfSpacers": (disc_arrangement or {}).get("noOfSpacers", 0),
+        "widthOfSpacer": (disc_arrangement or {}).get("widthOfSpacer", 0),
+        "excessTurns": (disc_arrangement or {}).get("excessTurns", 0),
+        "spacersToBeRemoved": (disc_arrangement or {}).get("spacersToBeRemoved", 0),
+        "fullDisc": (disc_arrangement or {}).get("fullDisc", 0),
+        "halfDisc": (disc_arrangement or {}).get("halfDisc", 0),
+        "partialDisc": (disc_arrangement or {}).get("partialDisc", 0),
+        "balanceSpacersInLastDisc": (disc_arrangement or {}).get("balanceSpacersInLastDisc", 0),
+        "discArrangement": (disc_arrangement or {}).get("discArrangement", ""),
         "isConductorRound": is_round,
         "isEnamel": is_enamel,
         "model": serialize_winding_inputs(winding),

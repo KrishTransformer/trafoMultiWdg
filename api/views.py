@@ -12,9 +12,9 @@ from api.services.circWdgService import calculate_circ_wdg
 RADIAL_GAP_FIELDS_BY_SELECTION = {
     "2_WDG": ("coreToLv", "lvToHv"),
     "3_WDG": ("coreToLv", "lvToHv", "hvToOuter"),
-    "4_WDG_C": ("coreToLv", "lvToHv", "lvToCoarse", "coarseToOuter"),
-    "4_WDG_F": ("coreToLv", "lvToHv", "lvToFine", "fineToOuter"),
-    "5_WDG": ("coreToLv", "lvToHv", "lvToCoarse", "fineToCoarse", "fineToOuter"),
+    "4_WDG_C": ("coreToLv", "lvToHv", "hvToCorse", "corseToOuter"),
+    "4_WDG_F": ("coreToLv", "lvToHv", "hvToFine", "fineToOuter"),
+    "5_WDG": ("coreToLv", "lvToHv", "hvToCorse", "corseToFine", "fineToOuter"),
 }
 
 
@@ -54,6 +54,14 @@ def _normalize_radial_gaps_payload(payload):
     normalized_payload = dict(payload)
     if "lvToHv" not in normalized_payload and "LvtoHV" in normalized_payload:
         normalized_payload["lvToHv"] = normalized_payload["LvtoHV"]
+    if "hvToCorse" not in normalized_payload and "lvToCoarse" in normalized_payload:
+        normalized_payload["hvToCorse"] = normalized_payload["lvToCoarse"]
+    if "hvToFine" not in normalized_payload and "lvToFine" in normalized_payload:
+        normalized_payload["hvToFine"] = normalized_payload["lvToFine"]
+    if "corseToFine" not in normalized_payload and "fineToCoarse" in normalized_payload:
+        normalized_payload["corseToFine"] = normalized_payload["fineToCoarse"]
+    if "corseToOuter" not in normalized_payload and "coarseToOuter" in normalized_payload:
+        normalized_payload["corseToOuter"] = normalized_payload["coarseToOuter"]
     return normalized_payload
 
 

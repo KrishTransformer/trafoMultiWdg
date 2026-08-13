@@ -1,6 +1,7 @@
 import math
 
 from api.models import Windings
+from api.services._windingServiceSupport import build_disc_arrangement, resolve_axial_parallel_for_winding
 from api.services.numberUtils import (
     next_integer,
     one_digit_decimal,
@@ -53,8 +54,10 @@ from api.services.windingFormulae import (
     get_r26,
     get_r75,
     get_revised_conductor_cross_section,
+    get_revised_net_area,
     get_revised_flux_density,
     get_revised_volts_per_turn,
+    get_reversed_revised_volts_per_turn,
     get_round_cond_dia,
     get_rw,
     get_spacers_and_width,
@@ -159,6 +162,8 @@ def _build_base_context(multi_winding, winding):
     material = _lv_material(multi_winding)
 
     k_value = multi_winding.kValue
+    core = getattr(multi_winding, "core", None)
+    core_dia_from_user = getattr(core, "coreDia", None)
     volts_per_turn = get_volts_per_turn(k_value, multi_winding.kVA) if k_value and multi_winding.kVA else None
     lv_volts_per_phase = get_lv_volts_per_phase(multi_winding.lowVoltage, vector_group)
     lv_turns_per_phase = get_turns_per_phase(
@@ -170,8 +175,27 @@ def _build_base_context(multi_winding, winding):
     )
     revised_volts_per_turn = get_revised_volts_per_turn(lv_volts_per_phase, lv_turns_per_phase)
     net_area = get_net_area(revised_volts_per_turn, multi_winding.frequency, multi_winding.fluxDensity)
-    gross_area = get_gross_core_area(net_area, get_core_diameter(net_area))
-    core_diameter = int(math.ceil(get_core_diameter(gross_area)))
+    gross_area = get_gross_core_area(net_area, get_core_diameter(net_area), core_dia_from_user)
+    core_diameter = int(math.ceil(get_core_diameter(gross_area, core_dia_from_user)))
+
+    if core_dia_from_user is not None:
+        core_diameter = int(core_dia_from_user)
+        gross_area = get_gross_core_area(None, None, core_diameter)
+        net_area = get_revised_net_area(gross_area, core_diameter)
+        revised_volts_per_turn = get_reversed_revised_volts_per_turn(
+            net_area,
+            multi_winding.frequency,
+            multi_winding.fluxDensity,
+        )
+        lv_turns_per_phase = get_turns_per_phase(
+            lv_volts_per_phase,
+            revised_volts_per_turn,
+            winding.turnsPerPhase,
+            vector_group,
+            True,
+        )
+        revised_volts_per_turn = get_revised_volts_per_turn(lv_volts_per_phase, lv_turns_per_phase)
+
     revised_flux_density = get_revised_flux_density(revised_volts_per_turn, multi_winding.frequency, net_area)
     lv_current_per_phase = get_current_per_phase(multi_winding.kVA, lv_volts_per_phase)
     current_density = get_current_density(
@@ -186,7 +210,7 @@ def _build_base_context(multi_winding, winding):
         k_value,
         core_diameter,
         material,
-        getattr(getattr(multi_winding, "core", None), "limbHt", None),
+        getattr(core, "limbHt", None),
         dry_type,
     )
     end_clearance = get_lv_end_clearance(
@@ -741,7 +765,10 @@ def _calculate_disc(ctx, winding):
         ctx["dryType"],
     )
     radial_parallel = winding.radialParallelCond if winding.radialParallelCond is not None else number_of_conductors
-    axial_parallel = get_axial_parallel_conductors(number_of_conductors, radial_parallel, winding.axialParallelCond)
+    axial_parallel = resolve_axial_parallel_for_winding(
+        "DISC",
+        get_axial_parallel_conductors(number_of_conductors, radial_parallel, winding.axialParallelCond),
+    )
     number_of_conductors = radial_parallel * axial_parallel
     cross_sec_per_conductor = get_x_sec_per_conductor(conductor_cross_section, number_of_conductors)
     disc_duct_size = get_disc_duct_size(ctx["lowVoltage"], True, ctx["vectorGroup"], None)
@@ -771,10 +798,10 @@ def _calculate_disc(ctx, winding):
 
     no_of_discs = _next_even_integer(ctx["lvWindingLength"] / max((breadth_insulated * axial_parallel) + disc_duct_size, 0.1))
     turns_per_disc = ctx["lvTurnsPerPhase"] / max(no_of_discs, 1)
-    while two_digit_decimal_part(turns_per_disc) < 0.7:
+    while two_digit_decimal_part(turns_per_disc) < 0.7 or two_digit_decimal_part(turns_per_disc) >= 0.95:
         no_of_discs += 2
         turns_per_disc = ctx["lvTurnsPerPhase"] / no_of_discs
-        if two_digit_decimal_part(turns_per_disc) >= 0.7:
+        if 0.68 <= two_digit_decimal_part(turns_per_disc) < 0.95:
             break
     turns_per_disc = int(math.ceil(turns_per_disc))
 
@@ -833,11 +860,7 @@ def _calculate_disc(ctx, winding):
     psi = get_psi(breadth_insulated, radial_thickness, duct_thickness, no_of_ducts)
     rw = get_rw(v0, psi, conductor_insulation)
     gradient = one_digit_decimal(v0 * psi * rw)
-    excess_turns = max(0, int((turns_per_disc * no_of_discs) - ctx["lvTurnsPerPhase"]))
-    if excess_turns > 0:
-        no_of_spacers, width_of_spacer = get_spacers_and_width(lv_id, no_of_discs, excess_turns)
-    else:
-        no_of_spacers, width_of_spacer = 0, 0
+    disc_arrangement = build_disc_arrangement(lv_id, no_of_discs, turns_per_disc, ctx["lvTurnsPerPhase"])
 
     return {
         "lvWindingLength": winding_length,
@@ -877,8 +900,15 @@ def _calculate_disc(ctx, winding):
         "lvDuctThickness": duct_thickness,
         "lvTransposition": 0,
         "lvDiscDuctsSize": disc_duct_size,
-        "lvNoOfSpacers": no_of_spacers,
-        "lvWidthOfSpacer": width_of_spacer,
+        "lvNoOfSpacers": disc_arrangement["noOfSpacers"],
+        "lvWidthOfSpacer": disc_arrangement["widthOfSpacer"],
+        "lvExcessTurns": disc_arrangement["excessTurns"],
+        "lvSpacersToBeRemoved": disc_arrangement["spacersToBeRemoved"],
+        "lvFullDisc": disc_arrangement["fullDisc"],
+        "lvHalfDisc": disc_arrangement["halfDisc"],
+        "lvPartialDisc": disc_arrangement["partialDisc"],
+        "lvBalanceSpacersInLastDisc": disc_arrangement["balanceSpacersInLastDisc"],
+        "lvDiscArrangement": disc_arrangement["discArrangement"],
     }
 
 
@@ -1054,6 +1084,7 @@ def _calculate_layer_disc(ctx, winding):
     psi = get_psi(breadth_insulated, radial_thickness, 0, 0)
     rw = get_rw(v0, psi, conductor_insulation)
     gradient = one_digit_decimal(v0 * psi * rw)
+    disc_arrangement = build_disc_arrangement(lv_id, turns_per_layer, number_of_layers, ctx["lvTurnsPerPhase"])
 
     return {
         "lvWindingLength": winding_length,
@@ -1093,6 +1124,15 @@ def _calculate_layer_disc(ctx, winding):
         "lvDuctThickness": duct_thickness,
         "lvTransposition": 0,
         "lvDiscDuctsSize": disc_duct_size,
+        "lvNoOfSpacers": disc_arrangement["noOfSpacers"],
+        "lvWidthOfSpacer": disc_arrangement["widthOfSpacer"],
+        "lvExcessTurns": disc_arrangement["excessTurns"],
+        "lvSpacersToBeRemoved": disc_arrangement["spacersToBeRemoved"],
+        "lvFullDisc": disc_arrangement["fullDisc"],
+        "lvHalfDisc": disc_arrangement["halfDisc"],
+        "lvPartialDisc": disc_arrangement["partialDisc"],
+        "lvBalanceSpacersInLastDisc": disc_arrangement["balanceSpacersInLastDisc"],
+        "lvDiscArrangement": disc_arrangement["discArrangement"],
     }
 
 

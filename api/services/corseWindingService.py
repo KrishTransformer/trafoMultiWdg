@@ -19,6 +19,8 @@ def calculate_corse_windings(
         allocated_voltage=allocated_voltage,
         seed_dimensions=seed_dimensions,
         dry_type=bool(getattr(multi_winding, "dryType", False)),
+        ambient_temp=getattr(multi_winding, "ambientTemp", 50) or 50,
+        winding_temp=getattr(multi_winding, "windingTemp", 55) or 55,
         current_density_override=getattr(multi_winding, "corseCurrentDensity", None),
         allow_turns_fallback=allow_turns_fallback,
     )
