@@ -8,6 +8,8 @@ def calculate_corse_windings(
     allocated_turns,
     allocated_voltage,
     allow_turns_fallback=True,
+    limb_height=None,
+    perma_wood_ring=0.0,
 ):
     return build_hv_section_results(
         section_name="corse",
@@ -23,4 +25,7 @@ def calculate_corse_windings(
         winding_temp=getattr(multi_winding, "windingTemp", 55) or 55,
         current_density_override=getattr(multi_winding, "corseCurrentDensity", None),
         allow_turns_fallback=allow_turns_fallback,
+        limb_height=limb_height,
+        perma_wood_ring=perma_wood_ring,
+        kva=getattr(multi_winding, "kVA", 0.0),
     )

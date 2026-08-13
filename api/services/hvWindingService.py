@@ -163,6 +163,13 @@ def _normalize_winding_type(winding_type):
     return str(winding_type or "HELICAL").upper().replace("-", "_").replace(" ", "_")
 
 
+def _resolve_limb_height(multi_winding, lv_results):
+    configured_limb_height = getattr(getattr(multi_winding, "core", None), "limbHt", None)
+    if configured_limb_height is not None and configured_limb_height > 0:
+        return configured_limb_height
+    return lv_results["windowHeight"]
+
+
 def calculate_hv_windings(multi_winding, lv_results):
     winding = _safe_winding(getattr(multi_winding, "hvWindings", None))
     dry_type = _dry_type(multi_winding)
@@ -211,7 +218,8 @@ def calculate_hv_windings(multi_winding, lv_results):
         dry_type,
         False,
     )
-    winding_length = get_winding_length(lv_results["windowHeight"], end_clearance, lv_results["permaWoodRing"])
+    limb_height = _resolve_limb_height(multi_winding, lv_results)
+    winding_length = get_winding_length(limb_height, end_clearance, lv_results["permaWoodRing"])
     duct_thickness = get_duct_size(multi_winding.kVA, winding_length, winding.ductSize, dry_type)
     conductor_cross_section = get_conductor_cross_section(hv_current_at_lowest, current_density)
     no_of_conductors = get_number_of_conductors(conductor_cross_section, material)
@@ -273,27 +281,87 @@ def calculate_hv_windings(multi_winding, lv_results):
         hv_wdg_length_per_coil = next_integer(breadth_insulated * axial_parallel * (turns_per_layer + 1))
         hv_gap_bw_coil = int(math.floor((winding_length - (hv_wdg_length_per_coil * hv_no_of_coils)) / max(hv_no_of_coils, 1)))
         winding_length = (hv_wdg_length_per_coil * hv_no_of_coils) + (hv_gap_bw_coil * (hv_no_of_coils - 1))
-        end_clearance = max(0, lv_results["windowHeight"] - winding_length)
+        end_clearance = max(0, limb_height - winding_length)
     elif winding_type == "DISC":
-        winding_length = lv_results["windowHeight"] - lv_results["permaWoodRing"] - end_clearance
         is_round = False
         disc_duct_size = get_disc_duct_size(multi_winding.highVoltage, False, vector_group, None)
-        disc_geometry = _select_disc_conductor_geometry(
-            hv_turns_at_highest,
-            winding_length,
-            cross_sec_per_conductor,
-            conductor_insulation,
-            axial_parallel,
-            disc_duct_size,
-            winding.condBreadth,
-            winding.condHeight,
+        available_winding_length = get_winding_length(limb_height, end_clearance, lv_results["permaWoodRing"])
+        winding_length = available_winding_length
+        if winding.condBreadth is not None:
+            breadth = winding.condBreadth
+        else:
+            breadth = 14
+        if winding.condHeight is not None:
+            height = winding.condHeight
+            if winding.condBreadth is None:
+                breadth = get_height(cross_sec_per_conductor, height)
+        else:
+            height = get_height(cross_sec_per_conductor, breadth)
+        if winding.condBreadth is None and winding.condHeight is None:
+            while breadth > 6 * height:
+                breadth = one_digit_decimal(breadth - 0.1)
+                height = get_height(cross_sec_per_conductor, breadth)
+                if breadth <= 6 * height:
+                    break
+
+        breadth = one_digit_decimal(breadth)
+        breadth_insulated = breadth + conductor_insulation
+        no_of_discs = max(
+            2,
+            int(
+                math.ceil(
+                    available_winding_length
+                    / max((breadth_insulated * axial_parallel) + disc_duct_size, 0.1)
+                )
+            ),
         )
-        breadth = disc_geometry["breadth"]
-        height = disc_geometry["height"]
-        breadth_insulated = disc_geometry["breadthInsulated"]
-        height_insulated = get_height_insulated(height, conductor_insulation)
-        turns_per_layer = int(disc_geometry["noOfDiscs"])
-        number_of_layers = int(disc_geometry["turnsPerDisc"])
+        if no_of_discs % 2 != 0:
+            no_of_discs += 1
+        original_no_of_discs = no_of_discs
+        turns_per_disc_rough = hv_turns_at_highest / max(no_of_discs, 1)
+        while two_digit_decimal_part(turns_per_disc_rough) < 0.7 or two_digit_decimal_part(turns_per_disc_rough) >= 0.95:
+            no_of_discs += 2
+            turns_per_disc_rough = hv_turns_at_highest / max(no_of_discs, 1)
+            if 0.68 <= two_digit_decimal_part(turns_per_disc_rough) < 0.95:
+                break
+        turns_per_disc = int(math.ceil(turns_per_disc_rough))
+
+        if winding.condBreadth is None and winding.condHeight is None:
+            breadth_insulated = (
+                (available_winding_length / max(no_of_discs, 1))
+                - (disc_duct_size * INSULATION_COMPRESSION)
+            ) / max(axial_parallel, 1)
+            breadth = one_digit_decimal(
+                breadth_insulated - (conductor_insulation * INSULATION_COMPRESSION)
+            )
+            breadth_insulated = breadth + conductor_insulation
+            height = get_height(cross_sec_per_conductor, breadth)
+
+            if breadth < 5 and height > 1.7:
+                no_of_discs = original_no_of_discs
+                turns_per_disc_rough = hv_turns_at_highest / max(no_of_discs, 1)
+                while no_of_discs > 2 and (
+                    two_digit_decimal_part(turns_per_disc_rough) < 0.7
+                    or two_digit_decimal_part(turns_per_disc_rough) >= 0.95
+                ):
+                    no_of_discs -= 2
+                    turns_per_disc_rough = hv_turns_at_highest / max(no_of_discs, 1)
+                    if 0.68 <= two_digit_decimal_part(turns_per_disc_rough) < 0.95:
+                        break
+
+                turns_per_disc = int(math.ceil(turns_per_disc_rough))
+                breadth_insulated = (
+                    (available_winding_length / max(no_of_discs, 1))
+                    - (disc_duct_size * INSULATION_COMPRESSION)
+                ) / max(axial_parallel, 1)
+                breadth = one_digit_decimal(
+                    breadth_insulated - (conductor_insulation * INSULATION_COMPRESSION)
+                )
+                height = get_height(cross_sec_per_conductor, breadth)
+                breadth_insulated = one_digit_decimal(breadth + conductor_insulation)
+
+        turns_per_layer = int(no_of_discs)
+        number_of_layers = int(turns_per_disc)
         winding_length = get_disc_winding_length(
             breadth,
             conductor_insulation,
@@ -301,12 +369,27 @@ def calculate_hv_windings(multi_winding, lv_results):
             turns_per_layer,
             disc_duct_size,
         )
-        end_clearance = max(0, int(math.floor(lv_results["windowHeight"] - (winding_length + lv_results["permaWoodRing"]))))
+        if winding.condBreadth is None and winding.condHeight is None:
+            while winding_length > available_winding_length and breadth > 0.1:
+                breadth = one_digit_decimal(breadth - 0.1)
+                height = get_height(cross_sec_per_conductor, breadth)
+                breadth_insulated = one_digit_decimal(breadth + conductor_insulation)
+                winding_length = get_disc_winding_length(
+                    breadth,
+                    conductor_insulation,
+                    INSULATION_COMPRESSION,
+                    turns_per_layer,
+                    disc_duct_size,
+                )
+
+        revised_cond_cross_section = get_revised_conductor_cross_section(breadth, height)
+        height_insulated = get_height_insulated(height, conductor_insulation)
+        end_clearance = max(0, int(math.floor(limb_height - (winding_length + lv_results["permaWoodRing"]))))
     else:
         turns_per_layer = max(1, int(math.floor((winding_length - transposition) / max(breadth_insulated * axial_parallel, 0.1))))
         turns_per_layer, number_of_layers = _adjust_helical_hv_layers(hv_turns_at_highest, turns_per_layer)
         winding_length = next_integer((turns_per_layer + 1) * (breadth_insulated * axial_parallel))
-        end_clearance = max(0, lv_results["windowHeight"] - winding_length - transposition)
+        end_clearance = max(0, limb_height - winding_length - transposition)
     revised_curr_den_normal = three_digit_decimal(hv_current_per_phase / (revised_cond_cross_section * no_of_conductors))
     revised_curr_den_lowest = three_digit_decimal(hv_current_at_lowest / (revised_cond_cross_section * no_of_conductors))
     total_cond_cross_section = get_actual_conductor_x_sec(revised_cond_cross_section, no_of_conductors)

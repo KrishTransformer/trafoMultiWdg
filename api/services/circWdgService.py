@@ -262,7 +262,271 @@ def _get_gap_layout(selection):
     return COIL_SCALE_GAP_LAYOUTS.get(selection, ())
 
 
-def _build_extra_winding_results(multi_winding, selection, hv_source, section_allocations, previous_geometry):
+def _get_post_hv_gap_for_voltage(kva, section_voltage, vector_group):
+    voltage = safe_float(section_voltage, 0.0)
+    rating = safe_float(kva, 0.0)
+    connection = str(vector_group or "").strip().upper()[:1]
+
+    if voltage <= 0:
+        return 0.0
+    if voltage <= 1100:
+        return 5.0 if rating <= 500 else 6.0
+    if voltage <= 6600:
+        return 6.0 if rating <= 1000 else 7.0
+    if voltage <= 11000:
+        if rating <= 100:
+            return 7.0
+        if rating <= 2500:
+            return 8.0
+        return 9.0
+    if voltage <= 33000:
+        return 18.0
+    if voltage <= 66000:
+        return 28.0
+    return 54.0 if connection == "D" else 43.0
+
+
+def _resolve_post_hv_gap_to_previous(multi_winding, winding_name, gap_field, radial_gaps, section_allocations, lv_results):
+    explicit_gap = safe_float(
+        getattr(radial_gaps, gap_field, 0.0) if radial_gaps is not None else 0.0,
+        0.0,
+    )
+    if explicit_gap > 0:
+        return explicit_gap
+
+    allocated_turns = safe_float((section_allocations.get(winding_name) or {}).get("turns"), 0.0)
+    if allocated_turns <= 0:
+        winding = getattr(multi_winding, WINDING_MODEL_ATTRS[winding_name], None)
+        allocated_turns = safe_float(getattr(winding, "turnsPerPhase", None), 0.0) if winding is not None else 0.0
+    if allocated_turns <= 0:
+        return explicit_gap
+
+    section_voltage = safe_float(lv_results.get("revisedVoltsPerTurn"), 0.0) * allocated_turns * 2
+    return _get_post_hv_gap_for_voltage(
+        getattr(multi_winding, "kVA", 0.0),
+        section_voltage,
+        getattr(multi_winding, "vectorGroup", ""),
+    )
+
+
+def _build_finalized_hv_source(raw_hv_results, hv_section_results):
+    if not hv_section_results:
+        return raw_hv_results
+
+    finalized_hv_source = dict(raw_hv_results)
+    finalized_hv_source.update(
+        {
+            "hvTurnsPerPhase": safe_float(
+                hv_section_results.get("turnsPerPhase"),
+                raw_hv_results.get("hvTurnsPerPhase", 0.0),
+            ),
+            "hvTurnsAtHighest": safe_float(
+                hv_section_results.get("turnsPerPhase"),
+                raw_hv_results.get("hvTurnsAtHighest", 0.0),
+            ),
+            "hvTurnsAtLowest": safe_float(
+                hv_section_results.get("turnsPerPhase"),
+                raw_hv_results.get("hvTurnsAtLowest", 0.0),
+            ),
+            "hvVoltsPerPhase": safe_float(
+                hv_section_results.get("voltsPerPhase"),
+                raw_hv_results.get("hvVoltsPerPhase", 0.0),
+            ),
+            "hvCurrentPerPhase": safe_float(
+                hv_section_results.get("phaseCurrent"),
+                raw_hv_results.get("hvCurrentPerPhase", 0.0),
+            ),
+            "hVRevisedCurrDenAtNormal": safe_float(
+                hv_section_results.get("currentDensity"),
+                raw_hv_results.get("hVRevisedCurrDenAtNormal", 0.0),
+            ),
+            "hVRevisedCurrDenAtLowest": safe_float(
+                hv_section_results.get("currentDensity"),
+                raw_hv_results.get("hVRevisedCurrDenAtLowest", 0.0),
+            ),
+            "hvConductorCrossSection": safe_float(
+                hv_section_results.get("conductorCrossSection"),
+                raw_hv_results.get("hvConductorCrossSection", 0.0),
+            ),
+            "hvTotalCondCrossSection": safe_float(
+                hv_section_results.get("condCrossSec"),
+                raw_hv_results.get("hvTotalCondCrossSection", 0.0),
+            ),
+            "hvConductorInsulation": safe_float(
+                hv_section_results.get("conductorInsulation"),
+                raw_hv_results.get("hvConductorInsulation", 0.0),
+            ),
+            "hvInterLayerInsulation": safe_float(
+                hv_section_results.get("interLayerInsulation"),
+                raw_hv_results.get("hvInterLayerInsulation", 0.0),
+            ),
+            "hvRadialParallelConductors": safe_float(
+                hv_section_results.get("radialParallelCond"),
+                raw_hv_results.get("hvRadialParallelConductors", 1.0),
+            ),
+            "hvAxialParallelConductors": safe_float(
+                hv_section_results.get("axialParallelCond"),
+                raw_hv_results.get("hvAxialParallelConductors", 1.0),
+            ),
+            "hvNoOfConductors": safe_float(
+                hv_section_results.get("noOfConductors"),
+                raw_hv_results.get("hvNoOfConductors", 0.0),
+            ),
+            "hvBreadth": safe_float(
+                hv_section_results.get("breadth"),
+                raw_hv_results.get("hvBreadth", 0.0),
+            ),
+            "hvHeight": safe_float(
+                hv_section_results.get("height"),
+                raw_hv_results.get("hvHeight", 0.0),
+            ),
+            "hvBreadthInsulated": safe_float(
+                hv_section_results.get("breadthInsulated"),
+                raw_hv_results.get("hvBreadthInsulated", 0.0),
+            ),
+            "hvHeightInsulated": safe_float(
+                hv_section_results.get("heightInsulated"),
+                raw_hv_results.get("hvHeightInsulated", 0.0),
+            ),
+            "hvTurnsPerLayer": safe_float(
+                hv_section_results.get("turnsPerLayer"),
+                raw_hv_results.get("hvTurnsPerLayer", 0.0),
+            ),
+            "hvNumberOfLayers": safe_float(
+                hv_section_results.get("noOfLayers"),
+                raw_hv_results.get("hvNumberOfLayers", 0.0),
+            ),
+            "hvWindingLength": safe_float(
+                hv_section_results.get("windingLength"),
+                raw_hv_results.get("hvWindingLength", 0.0),
+            ),
+            "hvEndClearance": safe_float(
+                hv_section_results.get("endClearance"),
+                raw_hv_results.get("hvEndClearance", 0.0),
+            ),
+            "hvNoOfDuct": safe_float(
+                hv_section_results.get("ducts"),
+                raw_hv_results.get("hvNoOfDuct", 0.0),
+            ),
+            "hvDuctThickness": safe_float(
+                hv_section_results.get("ductSize"),
+                raw_hv_results.get("hvDuctThickness", 0.0),
+            ),
+            "hvRadialThickness": safe_float(
+                hv_section_results.get("radialThickness"),
+                raw_hv_results.get("hvRadialThickness", 0.0),
+            ),
+            "hvId": safe_float(
+                hv_section_results.get("innerDiameter"),
+                raw_hv_results.get("hvId", 0.0),
+            ),
+            "hvOd": safe_float(
+                hv_section_results.get("outerDiameter"),
+                raw_hv_results.get("hvOd", 0.0),
+            ),
+            "hvLmt": safe_float(
+                hv_section_results.get("lmt"),
+                raw_hv_results.get("hvLmt", 0.0),
+            ),
+            "hvWireLength": safe_float(
+                hv_section_results.get("wireLength"),
+                raw_hv_results.get("hvWireLength", 0.0),
+            ),
+            "hvR75": safe_float(
+                hv_section_results.get("r75"),
+                raw_hv_results.get("hvR75", 0.0),
+            ),
+            "hvR26": safe_float(
+                hv_section_results.get("r26"),
+                raw_hv_results.get("hvR26", 0.0),
+            ),
+            "hvBareWeight": safe_float(
+                hv_section_results.get("bareWeight"),
+                raw_hv_results.get("hvBareWeight", 0.0),
+            ),
+            "hvInsulatedWeight": safe_float(
+                hv_section_results.get("insulatedWeight"),
+                raw_hv_results.get("hvInsulatedWeight", 0.0),
+            ),
+            "hvLoadLossAtNormal": safe_float(
+                hv_section_results.get("loadLoss"),
+                raw_hv_results.get("hvLoadLossAtNormal", 0.0),
+            ),
+            "hvLoadLossAtLowest": safe_float(
+                hv_section_results.get("loadLoss"),
+                raw_hv_results.get("hvLoadLossAtLowest", 0.0),
+            ),
+            "%hvStrayLoss": safe_float(
+                hv_section_results.get("strayLoss"),
+                raw_hv_results.get("%hvStrayLoss", 0.0),
+            ),
+            "hvGradient": safe_float(
+                hv_section_results.get("gradient"),
+                raw_hv_results.get("hvGradient", 0.0),
+            ),
+            "hvDiscDuctsSize": safe_float(
+                hv_section_results.get("discDuctSize"),
+                raw_hv_results.get("hvDiscDuctsSize", 0.0),
+            ),
+            "hvNoOfSpacers": hv_section_results.get(
+                "noOfSpacers",
+                raw_hv_results.get("hvNoOfSpacers", 0),
+            ),
+            "hvWidthOfSpacer": hv_section_results.get(
+                "widthOfSpacer",
+                raw_hv_results.get("hvWidthOfSpacer", 0),
+            ),
+            "hvExcessTurns": hv_section_results.get(
+                "excessTurns",
+                raw_hv_results.get("hvExcessTurns", 0),
+            ),
+            "hvSpacersToBeRemoved": hv_section_results.get(
+                "spacersToBeRemoved",
+                raw_hv_results.get("hvSpacersToBeRemoved", 0),
+            ),
+            "hvFullDisc": hv_section_results.get(
+                "fullDisc",
+                raw_hv_results.get("hvFullDisc", 0),
+            ),
+            "hvHalfDisc": hv_section_results.get(
+                "halfDisc",
+                raw_hv_results.get("hvHalfDisc", 0),
+            ),
+            "hvPartialDisc": hv_section_results.get(
+                "partialDisc",
+                raw_hv_results.get("hvPartialDisc", 0),
+            ),
+            "hvBalanceSpacersInLastDisc": hv_section_results.get(
+                "balanceSpacersInLastDisc",
+                raw_hv_results.get("hvBalanceSpacersInLastDisc", 0),
+            ),
+            "hvDiscArrangement": hv_section_results.get(
+                "discArrangement",
+                raw_hv_results.get("hvDiscArrangement", ""),
+            ),
+            "hvIsConductorRound": hv_section_results.get(
+                "isConductorRound",
+                raw_hv_results.get("hvIsConductorRound"),
+            ),
+            "hvIsEnamel": hv_section_results.get(
+                "isEnamel",
+                raw_hv_results.get("hvIsEnamel"),
+            ),
+        }
+    )
+    return finalized_hv_source
+
+
+def _build_extra_winding_results(
+    multi_winding,
+    selection,
+    hv_source,
+    section_allocations,
+    previous_geometry,
+    lv_results,
+    limb_height=None,
+    perma_wood_ring=0.0,
+):
     radial_gaps = getattr(multi_winding, "radialGaps", None)
     allow_turns_fallback = _get_total_taps(multi_winding) <= 0
     extra_results = {
@@ -275,6 +539,14 @@ def _build_extra_winding_results(multi_winding, selection, hv_source, section_al
         winding_name = gap_layout["winding"]
         gap_field = gap_layout["gapField"]
         seed_dimensions = build_seed_dimensions(previous_geometry, gap_field, radial_gaps)
+        seed_dimensions["gapToPrevious"] = _resolve_post_hv_gap_to_previous(
+            multi_winding,
+            winding_name,
+            gap_field,
+            radial_gaps,
+            section_allocations,
+            lv_results,
+        )
         service = EXTRA_WINDING_SERVICE_MAP[winding_name]
         result = service(
             multi_winding,
@@ -283,6 +555,8 @@ def _build_extra_winding_results(multi_winding, selection, hv_source, section_al
             (section_allocations.get(winding_name) or {}).get("turns", 0.0),
             (section_allocations.get(winding_name) or {}).get("voltsPerPhase", 0.0),
             allow_turns_fallback=allow_turns_fallback,
+            limb_height=limb_height,
+            perma_wood_ring=perma_wood_ring,
         )
         extra_results[winding_name] = result
         previous_geometry = build_geometry_snapshot(
@@ -292,6 +566,7 @@ def _build_extra_winding_results(multi_winding, selection, hv_source, section_al
             result.get("estimatedOuterDiameter", 0.0),
             result.get("estimatedWindingLength", 0.0),
             "estimated",
+            end_clearance=result.get("endClearance", 0.0),
         )
 
     return extra_results
@@ -438,15 +713,18 @@ def _build_tap_turns(tap_count, turns_per_tap):
     return two_digit_decimal(safe_float(tap_count, 0.0) * safe_float(turns_per_tap, 0.0))
 
 
-def _allocate_from_turn_share(total_turns, total_taps, share, volts_per_turn, turns_per_tap):
+def _allocate_from_turn_share(total_turns, total_taps, share, volts_per_turn, turns_per_tap, total_voltage=None):
     allocated_turns = two_digit_decimal(safe_float(total_turns, 0.0) * safe_float(share, 0.0))
     allocated_taps = two_digit_decimal(safe_float(total_taps, 0.0) * safe_float(share, 0.0))
     inferred_turns_per_tap = safe_float(turns_per_tap, 0.0)
     if inferred_turns_per_tap <= 0 and safe_float(total_taps, 0.0) > 0:
         inferred_turns_per_tap = two_digit_decimal(safe_float(total_turns, 0.0) / safe_float(total_taps, 1.0))
+    allocated_voltage = safe_float(total_voltage, 0.0) * safe_float(share, 0.0)
+    if allocated_voltage <= 0:
+        allocated_voltage = allocated_turns * safe_float(volts_per_turn, 0.0)
     return _build_section_allocation(
         turns=allocated_turns,
-        volts_per_phase=_vb_int(allocated_turns * safe_float(volts_per_turn, 0.0)),
+        volts_per_phase=_vb_int(allocated_voltage),
         taps=allocated_taps,
         turns_per_tap=inferred_turns_per_tap,
     )
@@ -476,8 +754,9 @@ def _apply_section_allocation_fallbacks(multi_winding, allocations, volts_per_tu
         allocation["voltsPerPhase"] = _vb_int(fallback_turns * volts_per_turn)
 
 
-def _seed_hv_main_winding(winding, hv_results):
+def _seed_hv_main_winding(winding, hv_results, winding_type=None):
     hv_winding = winding if winding is not None else Windings()
+    normalized_winding_type = str(winding_type or "HELICAL").upper()
 
     if safe_float(getattr(hv_winding, "turnsPerLayer", None), 0.0) <= 0:
         hv_winding.turnsPerLayer = safe_float(hv_results.get("hvTurnsPerLayer"), 0.0)
@@ -495,11 +774,11 @@ def _seed_hv_main_winding(winding, hv_results):
         hv_winding.radialParallelCond = int(round(safe_float(hv_results.get("hvRadialParallelConductors"), 1.0)))
     if getattr(hv_winding, "axialParallelCond", None) is None:
         hv_winding.axialParallelCond = int(round(safe_float(hv_results.get("hvAxialParallelConductors"), 1.0)))
-    if getattr(hv_winding, "condBreadth", None) is None:
+    if normalized_winding_type != "DISC" and getattr(hv_winding, "condBreadth", None) is None:
         hv_winding.condBreadth = safe_float(hv_results.get("hvBreadth"), 0.0)
-    if getattr(hv_winding, "condHeight", None) is None:
+    if normalized_winding_type != "DISC" and getattr(hv_winding, "condHeight", None) is None:
         hv_winding.condHeight = safe_float(hv_results.get("hvHeight"), 0.0)
-    if getattr(hv_winding, "conductorDiameter", None) is None:
+    if normalized_winding_type != "DISC" and getattr(hv_winding, "conductorDiameter", None) is None:
         hv_winding.conductorDiameter = safe_float(hv_results.get("hvBreadth"), 0.0)
     if getattr(hv_winding, "isConductorRound", None) is None:
         hv_winding.isConductorRound = hv_results.get("hvIsConductorRound")
@@ -537,6 +816,7 @@ def _get_high_side_distribution(multi_winding, lv_results, hv_results):
         return allocations
 
     tap_range_turns = max(highest_turns - lowest_turns, 0.0)
+    tap_range_voltage = max(highest_voltage - lowest_voltage, 0.0)
 
     if selection == "3 Wdg (LV, HV-Main and Outer)":
         allocations["outer"] = _allocate_from_turn_share(
@@ -545,6 +825,7 @@ def _get_high_side_distribution(multi_winding, lv_results, hv_results):
             1.0,
             volts_per_turn,
             turns_per_tap,
+            total_voltage=tap_range_voltage,
         )
     elif selection == "4 Wdg (LV, HV-Main, Corse and Outer)":
         allocations["corse"] = _allocate_from_turn_share(
@@ -553,6 +834,7 @@ def _get_high_side_distribution(multi_winding, lv_results, hv_results):
             0.5,
             volts_per_turn,
             turns_per_tap,
+            total_voltage=tap_range_voltage,
         )
         allocations["outer"] = _allocate_from_turn_share(
             tap_range_turns,
@@ -560,6 +842,7 @@ def _get_high_side_distribution(multi_winding, lv_results, hv_results):
             0.5,
             volts_per_turn,
             turns_per_tap,
+            total_voltage=tap_range_voltage,
         )
     elif selection == "4 Wdg (LV, HV-Main, Fine and Outer)":
         allocations["fine"] = _allocate_from_turn_share(
@@ -568,6 +851,7 @@ def _get_high_side_distribution(multi_winding, lv_results, hv_results):
             0.5,
             volts_per_turn,
             turns_per_tap,
+            total_voltage=tap_range_voltage,
         )
         allocations["outer"] = _allocate_from_turn_share(
             tap_range_turns,
@@ -575,6 +859,7 @@ def _get_high_side_distribution(multi_winding, lv_results, hv_results):
             0.5,
             volts_per_turn,
             turns_per_tap,
+            total_voltage=tap_range_voltage,
         )
     elif selection == "5 Wdg (LV, HV-Main, Corse, Fine and Outer)":
         allocations["corse"] = _allocate_from_turn_share(
@@ -583,6 +868,7 @@ def _get_high_side_distribution(multi_winding, lv_results, hv_results):
             0.5,
             volts_per_turn,
             turns_per_tap,
+            total_voltage=tap_range_voltage,
         )
         allocations["fine"] = _allocate_from_turn_share(
             tap_range_turns,
@@ -590,6 +876,7 @@ def _get_high_side_distribution(multi_winding, lv_results, hv_results):
             0.25,
             volts_per_turn,
             turns_per_tap,
+            total_voltage=tap_range_voltage,
         )
         allocations["outer"] = _allocate_from_turn_share(
             tap_range_turns,
@@ -597,6 +884,7 @@ def _get_high_side_distribution(multi_winding, lv_results, hv_results):
             0.25,
             volts_per_turn,
             turns_per_tap,
+            total_voltage=tap_range_voltage,
         )
 
     _apply_section_allocation_fallbacks(multi_winding, allocations, volts_per_turn)
@@ -607,7 +895,11 @@ def _build_hv_main_results(multi_winding, lv_results, hv_results, allocation):
     if multi_winding.windings == DEFAULT_WINDING_SELECTION:
         return hv_results
 
-    hv_winding = _seed_hv_main_winding(getattr(multi_winding, "hvWindings", None), hv_results)
+    hv_winding = _seed_hv_main_winding(
+        getattr(multi_winding, "hvWindings", None),
+        hv_results,
+        getattr(multi_winding, "hvWindingType", "HELICAL"),
+    )
     hv_seed_dimensions = {
         "previousWinding": "lv",
         "previousOuterDiameter": safe_float(lv_results["lvOd"], 0.0),
@@ -628,6 +920,8 @@ def _build_hv_main_results(multi_winding, lv_results, hv_results, allocation):
         dry_type=bool(getattr(multi_winding, "dryType", False)),
         ambient_temp=getattr(multi_winding, "ambientTemp", 50) or 50,
         winding_temp=getattr(multi_winding, "windingTemp", 55) or 55,
+        limb_height=safe_float(getattr(getattr(multi_winding, "core", None), "limbHt", None), safe_float(lv_results["windowHeight"], 0.0)),
+        perma_wood_ring=safe_float(lv_results["permaWoodRing"], 0.0),
     )
     section_results["hvTurnsPerTap"] = hv_results.get("hvTurnsPerTap", 0.0)
     section_results["hvHighestTapVoltage"] = hv_results.get("hvHighestTapVoltage", 0.0)
@@ -1069,8 +1363,6 @@ def _apply_section_results_to_model(winding, section_results):
     if winding is None or not section_results:
         return
 
-    model_inputs = section_results.get("model", {})
-    seed_dimensions = section_results.get("seedDimensions", {})
     winding.turnsPerPhase = section_results.get("turnsPerPhase")
     winding.terminal = section_results.get("voltsPerPhase", 0.0)
     winding.phaseCurrent = section_results.get("phaseCurrent")
@@ -1105,11 +1397,7 @@ def _apply_section_results_to_model(winding, section_results):
     winding.turnsLayers = (
         str(section_results.get("discArrangement", ""))
         if section_results.get("windingType") == "DISC"
-        else (
-            f'{seed_dimensions.get("previousWinding", "").upper()} -> '
-            f'{seed_dimensions.get("gapField", "")} -> '
-            f'{section_results.get("windingName", "").upper()}'
-        ).strip(" ->")
+        else str(section_results.get("turnsPerLayer", 0.0))
     )
     winding.conductorSizes = _conductor_size_label(
         section_results.get("breadth", 0.0),
@@ -1126,6 +1414,14 @@ def _build_phase_voltage_division(section_allocations):
         "corse": _vb_int((section_allocations.get("corse") or {}).get("voltsPerPhase", 0.0)),
         "fine": _vb_int((section_allocations.get("fine") or {}).get("voltsPerPhase", 0.0)),
         "outer": _vb_int((section_allocations.get("outer") or {}).get("voltsPerPhase", 0.0)),
+    }
+
+
+def _build_calculated_radial_gaps(radial_build):
+    return {
+        item["gapField"]: safe_float(item.get("gapFromPrevious"), 0.0)
+        for item in radial_build
+        if item.get("gapField")
     }
 
 
@@ -1292,6 +1588,11 @@ def calculate_circ_wdg(multi_winding):
             volts_per_phase=safe_float(raw_hv_results.get("hvVoltsPerPhase"), 0.0),
         )),
     )
+    finalized_hv_source = (
+        raw_hv_results
+        if multi_winding.windings == DEFAULT_WINDING_SELECTION
+        else _build_finalized_hv_source(raw_hv_results, hv_results)
+    )
     hv_results_for_calc = raw_hv_results if multi_winding.windings == DEFAULT_WINDING_SELECTION else hv_results
     hv_main_geometry = build_geometry_snapshot(
         "hv",
@@ -1300,13 +1601,17 @@ def calculate_circ_wdg(multi_winding):
         hv_results_for_calc["hvOd"] if "hvOd" in hv_results_for_calc else hv_results_for_calc["outerDiameter"],
         hv_results_for_calc["hvWindingLength"] if "hvWindingLength" in hv_results_for_calc else hv_results_for_calc["windingLength"],
         "calculated",
+        end_clearance=hv_results_for_calc["hvEndClearance"] if "hvEndClearance" in hv_results_for_calc else hv_results_for_calc["endClearance"],
     )
     extra_winding_results = _build_extra_winding_results(
         multi_winding,
         multi_winding.windings,
-        raw_hv_results,
+        finalized_hv_source,
         high_side_distribution,
         hv_main_geometry,
+        lv_results,
+        limb_height=effective_limb_height,
+        perma_wood_ring=safe_float(lv_results["permaWoodRing"], 0.0),
     )
     corse_results = extra_winding_results["corse"] if "corse" in active_windings else None
     fine_results = extra_winding_results["fine"] if "fine" in active_windings else None
@@ -1491,6 +1796,7 @@ def calculate_circ_wdg(multi_winding):
     )
     total_load_loss = next_integer(lv_results["lvLoadLoss"] + total_high_side_load_loss + recomputed_tank_loss)
     phase_voltage_division = _build_phase_voltage_division(high_side_distribution)
+    calculated_radial_gaps = _build_calculated_radial_gaps(coil_dimension_scale["radialBuild"])
     impedance_response = _build_impedance_response(impedance_summary)
     lv_winding_response = _with_named_volts_per_phase(
         lv_results,
@@ -1553,6 +1859,7 @@ def calculate_circ_wdg(multi_winding):
             "coreLoss": recomputed_core_loss,
             "phaseVoltages": phase_voltage_division,
             "phaseVoltageDivision": phase_voltage_division,
+            "calculatedRadialGaps": calculated_radial_gaps,
             "lvWinding": lv_winding_response,
             "hvWinding": hv_winding_response,
             "corseWinding": corse_results,

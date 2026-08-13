@@ -13,7 +13,11 @@ from api.services import (
     calculate_lv_windings,
     calculate_outer_windings,
 )
-from api.services.circWdgService import _get_high_side_distribution
+from api.services.circWdgService import (
+    _get_high_side_distribution,
+    _get_post_hv_gap_for_voltage,
+    _resolve_post_hv_gap_to_previous,
+)
 from api.services.impedanceVbService import calculate_vb_multi_impedance
 from api.services.numberUtils import next_integer
 from api.services.windingFormulae import get_load_loss, get_specific_loss, select_radiators
@@ -142,6 +146,165 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         self.assertIsNone(response.json()["results"]["coilDimensions"]["windingDimensions"]["outer"])
         self.assertIsNone(response.json()["results"]["coilDimensions"]["outerID"])
         self.assertIsNone(response.json()["inputs"]["coilDimensions"]["outerID"])
+
+    def test_3wdg_outer_voltage_uses_actual_tap_span(self):
+        payload = {
+            "designId": "1234",
+            "windingSelection": "3_WDG",
+            "kVA": 10000,
+            "kValue": 0.45,
+            "fluxDensity": 1.52,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 11000,
+            "highVoltage": 33000,
+            "tapStepsPercentage": 2.5,
+            "tapStepPositive": 2,
+            "tapStepNegative": 6,
+            "lvWindingType": "DISC",
+            "hvWindingType": "DISC",
+            "corseWindingType": "Helical",
+            "fineWindingType": "Helical",
+            "outerWindingType": "Helical",
+            "lvCurrentDensity": 2.1,
+            "hvCurrentDensity": 2.1,
+            "outerCurrentDensity": 2,
+            "core": {
+                "coreDia": 445,
+                "limbHt": 920,
+            },
+            "radialGaps": {
+                "coreToLv": 10,
+                "lvToHv": None,
+                "lvToCoarse": 8,
+                "fineToCoarse": 6,
+                "fineToOuter": 10,
+            },
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        results = response.json()["results"]
+        self.assertEqual(results["phaseVoltageDivision"]["outer"], 6600)
+        self.assertEqual(results["outerWinding"]["voltsPerPhase"], 6600.0)
+        self.assertEqual(results["calculatedRadialGaps"]["hvToOuter"], 18.0)
+        self.assertEqual(
+            results["outerWinding"]["endClearance"],
+            results["hvWinding"]["endClearance"] + 20.0,
+        )
+        self.assertLessEqual(
+            results["outerWinding"]["windingLength"],
+            results["core"]["limbHt"]
+            - results["outerWinding"]["endClearance"]
+            - results["lvWinding"]["permaWoodRing"],
+        )
+        self.assertNotEqual(
+            results["outerWinding"]["windingLength"],
+            results["hvWinding"]["windingLength"],
+        )
+        self.assertNotEqual(
+            results["outerWinding"]["endClearance"],
+            results["hvWinding"]["endClearance"],
+        )
+        self.assertEqual(
+            results["phaseVoltageDivision"]["outer"],
+            int(
+                results["hvWinding"]["hvHighestTapVoltage"]
+                - results["hvWinding"]["hvLowestTapVoltage"]
+            ),
+        )
+
+    def test_3wdg_missing_hv_to_outer_uses_voltage_class_gap_for_outer_geometry(self):
+        payload = {
+            "designId": "1234",
+            "windingSelection": "3_WDG",
+            "kVA": 10000,
+            "kValue": 0.45,
+            "fluxDensity": 1.52,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 11000,
+            "highVoltage": 33000,
+            "tapStepsPercentage": 2.5,
+            "tapStepPositive": 2,
+            "tapStepNegative": 6,
+            "lvWindingType": "DISC",
+            "hvWindingType": "DISC",
+            "outerWindingType": "Helical",
+            "lvCurrentDensity": 2.1,
+            "hvCurrentDensity": 2.1,
+            "outerCurrentDensity": 2,
+            "core": {
+                "coreDia": 445,
+                "limbHt": 920,
+            },
+            "radialGaps": {
+                "coreToLv": 10,
+                "lvToHv": None,
+            },
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        outer_results = response.json()["results"]["outerWinding"]
+        self.assertEqual(response.json()["results"]["calculatedRadialGaps"]["hvToOuter"], 18.0)
+        self.assertEqual(outer_results["seedDimensions"]["gapToPrevious"], 18.0)
+        self.assertEqual(
+            outer_results["innerDiameter"],
+            outer_results["seedDimensions"]["previousOuterDiameter"] + 36.0,
+        )
+
+    def test_3wdg_explicit_hv_to_outer_gap_overrides_voltage_class_gap(self):
+        payload = {
+            "windingSelection": "3_WDG",
+            "kVA": 10000,
+            "kValue": 0.45,
+            "fluxDensity": 1.52,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 11000,
+            "highVoltage": 33000,
+            "tapStepsPercentage": 2.5,
+            "tapStepPositive": 2,
+            "tapStepNegative": 6,
+            "lvWindingType": "DISC",
+            "hvWindingType": "DISC",
+            "outerWindingType": "Helical",
+            "lvCurrentDensity": 2.1,
+            "hvCurrentDensity": 2.1,
+            "outerCurrentDensity": 2,
+            "core": {
+                "coreDia": 445,
+                "limbHt": 920,
+            },
+            "radialGaps": {
+                "coreToLv": 10,
+                "lvToHv": None,
+                "hvToOuter": 10,
+            },
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        outer_results = response.json()["results"]["outerWinding"]
+        self.assertEqual(response.json()["results"]["calculatedRadialGaps"]["hvToOuter"], 10.0)
+        self.assertEqual(outer_results["seedDimensions"]["gapToPrevious"], 10.0)
+        self.assertEqual(
+            outer_results["innerDiameter"],
+            outer_results["seedDimensions"]["previousOuterDiameter"] + 20.0,
+        )
 
     def test_multi_wdg_calculator_honors_user_core_dia_input(self):
         payload = {
@@ -568,7 +731,17 @@ class MultiWdgCalculatorEndpointTests(TestCase):
             11000,
         )
         self.assertIsNotNone(response.json()["inputs"]["windingModels"]["outer"])
-        self.assertEqual(response.json()["inputs"]["windingModels"]["outer"]["endClearances"], 75)
+        hv_end_clearance = response.json()["results"]["hvWinding"]["endClearance"]
+        corse_end_clearance = response.json()["results"]["corseWinding"]["endClearance"]
+        fine_end_clearance = response.json()["results"]["fineWinding"]["endClearance"]
+        outer_end_clearance = response.json()["results"]["outerWinding"]["endClearance"]
+        self.assertEqual(corse_end_clearance, hv_end_clearance + 20.0)
+        self.assertEqual(fine_end_clearance, corse_end_clearance + 20.0)
+        self.assertEqual(outer_end_clearance, fine_end_clearance + 20.0)
+        self.assertEqual(
+            response.json()["inputs"]["windingModels"]["outer"]["endClearances"],
+            outer_end_clearance,
+        )
         self.assertEqual(
             response.json()["results"]["phaseVoltageDivision"]["corse"],
             int(response.json()["inputs"]["windingModels"]["corse"]["terminal"]),
@@ -700,6 +873,56 @@ class MultiWdgCalculatorEndpointTests(TestCase):
 
         self.assertEqual(hv_results["hvLoadLossAtNormal"], expected_normal)
         self.assertEqual(hv_results["hvLoadLossAtLowest"], expected_lowest)
+
+    def test_3wdg_disc_hv_main_does_not_breach_available_limb_height(self):
+        payload = {
+            "designId": "1234",
+            "windingSelection": "3_WDG",
+            "kVA": 10000,
+            "kValue": 0.45,
+            "fluxDensity": 1.52,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 11000,
+            "highVoltage": 33000,
+            "tapStepsPercentage": 2.5,
+            "tapStepPositive": 2,
+            "tapStepNegative": 6,
+            "lvWindingType": "DISC",
+            "hvWindingType": "DISC",
+            "corseWindingType": "Helical",
+            "fineWindingType": "Helical",
+            "outerWindingType": "Helical",
+            "lvCurrentDensity": 2.1,
+            "hvCurrentDensity": 2.1,
+            "outerCurrentDensity": 2,
+            "core": {
+                "coreDia": 445,
+                "limbHt": 920,
+            },
+            "radialGaps": {
+                "coreToLv": 10,
+                "lvToHv": None,
+                "lvToCoarse": 8,
+                "fineToCoarse": 6,
+                "fineToOuter": 10,
+            },
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        results = response.json()["results"]
+        hv_winding = results["hvWinding"]
+        expected_end_clearance = payload["core"]["limbHt"] - hv_winding["windingLength"] - results["lvWinding"]["permaWoodRing"]
+        self.assertEqual(hv_winding["endClearance"], expected_end_clearance)
+        self.assertLessEqual(
+            hv_winding["windingLength"] + hv_winding["endClearance"] + results["lvWinding"]["permaWoodRing"],
+            payload["core"]["limbHt"],
+        )
 
     def test_multi_wdg_response_exposes_hv_main_density_and_load_loss_fields(self):
         payload = {
@@ -1189,6 +1412,33 @@ class MultiWdgCalculatorEndpointTests(TestCase):
 
         self.assertEqual(hv_results["hvAxialParallelConductors"], 1)
 
+    def test_hv_disc_sizes_conductor_from_disc_count_without_breaching_available_length(self):
+        multi_winding = MultiWindings(
+            kVA=100,
+            kValue=0.45,
+            frequency=50,
+            fluxDensity=1.7,
+            vectorGroup="Dyn11",
+            lowVoltage=433,
+            highVoltage=11000,
+            hvCurrentDensity=2.2,
+            hvConductorMaterial="COPPER",
+        )
+        multi_winding.hvWindingType = "DISC"
+        multi_winding.core = SimpleNamespace(limbHt=900)
+        multi_winding.hvWindings = Windings(endClearances=60)
+
+        lv_results = calculate_lv_windings(multi_winding)
+        hv_results = calculate_hv_windings(multi_winding, lv_results)
+
+        available_winding_length = 900 - 60 - lv_results["permaWoodRing"]
+        self.assertLessEqual(hv_results["hvWindingLength"], available_winding_length)
+        self.assertAlmostEqual(
+            hv_results["hvRevisedCondCrossSection"],
+            hv_results["hvBreadth"] * hv_results["hvHeight"],
+            places=2,
+        )
+
     def test_circ_service_returns_linked_sections(self):
         multi_winding = MultiWindings(
             kVA=100,
@@ -1636,6 +1886,7 @@ class HighSideDistributionTests(TestCase):
 
         self.assertEqual(distribution["hv"]["turns"], 100.0)
         self.assertEqual(distribution["outer"]["turns"], 40.0)
+        self.assertEqual(distribution["outer"]["voltsPerPhase"], 1000.0)
         self.assertEqual(distribution["outer"]["taps"], 4.0)
         self.assertEqual(distribution["fine"]["turns"], 0.0)
         self.assertEqual(distribution["corse"]["turns"], 0.0)
@@ -1650,8 +1901,10 @@ class HighSideDistributionTests(TestCase):
         distribution = _get_high_side_distribution(multi_winding, self.lv_results, self.hv_results)
 
         self.assertEqual(distribution["outer"]["turns"], 20.0)
+        self.assertEqual(distribution["outer"]["voltsPerPhase"], 500.0)
         self.assertEqual(distribution["outer"]["taps"], 2.0)
         self.assertEqual(distribution["corse"]["turns"], 20.0)
+        self.assertEqual(distribution["corse"]["voltsPerPhase"], 500.0)
         self.assertEqual(distribution["corse"]["taps"], 2.0)
         self.assertEqual(distribution["fine"]["turns"], 0.0)
 
@@ -1665,8 +1918,10 @@ class HighSideDistributionTests(TestCase):
         distribution = _get_high_side_distribution(multi_winding, self.lv_results, self.hv_results)
 
         self.assertEqual(distribution["outer"]["turns"], 20.0)
+        self.assertEqual(distribution["outer"]["voltsPerPhase"], 500.0)
         self.assertEqual(distribution["outer"]["taps"], 2.0)
         self.assertEqual(distribution["fine"]["turns"], 20.0)
+        self.assertEqual(distribution["fine"]["voltsPerPhase"], 500.0)
         self.assertEqual(distribution["fine"]["taps"], 2.0)
         self.assertEqual(distribution["corse"]["turns"], 0.0)
 
@@ -1680,11 +1935,40 @@ class HighSideDistributionTests(TestCase):
         distribution = _get_high_side_distribution(multi_winding, self.lv_results, self.hv_results)
 
         self.assertEqual(distribution["outer"]["turns"], 10.0)
+        self.assertEqual(distribution["outer"]["voltsPerPhase"], 250.0)
         self.assertEqual(distribution["outer"]["taps"], 1.0)
         self.assertEqual(distribution["fine"]["turns"], 10.0)
+        self.assertEqual(distribution["fine"]["voltsPerPhase"], 250.0)
         self.assertEqual(distribution["fine"]["taps"], 1.0)
         self.assertEqual(distribution["corse"]["turns"], 20.0)
+        self.assertEqual(distribution["corse"]["voltsPerPhase"], 500.0)
         self.assertEqual(distribution["corse"]["taps"], 2.0)
+
+
+class PostHvGapSelectionTests(TestCase):
+    def test_voltage_class_gap_table_matches_expected_thresholds(self):
+        self.assertEqual(_get_post_hv_gap_for_voltage(500, 1100, "Dyn11"), 5.0)
+        self.assertEqual(_get_post_hv_gap_for_voltage(750, 6600, "Dyn11"), 6.0)
+        self.assertEqual(_get_post_hv_gap_for_voltage(2000, 11000, "Dyn11"), 8.0)
+        self.assertEqual(_get_post_hv_gap_for_voltage(10000, 13283.52, "Dyn11"), 18.0)
+        self.assertEqual(_get_post_hv_gap_for_voltage(10000, 66000, "Dyn11"), 28.0)
+        self.assertEqual(_get_post_hv_gap_for_voltage(10000, 132000, "Dyn11"), 54.0)
+        self.assertEqual(_get_post_hv_gap_for_voltage(10000, 132000, "Yyn0"), 43.0)
+
+    def test_resolve_post_hv_gap_keeps_explicit_gap(self):
+        multi_winding = MultiWindings(kVA=10000, vectorGroup="Dyn11")
+        multi_winding.outerWindings = Windings(turnsPerPhase=137.0)
+
+        gap = _resolve_post_hv_gap_to_previous(
+            multi_winding,
+            "outer",
+            "hvToOuter",
+            SimpleNamespace(hvToOuter=10.0),
+            {"outer": {"turns": 137.0}},
+            {"revisedVoltsPerTurn": 48.48},
+        )
+
+        self.assertEqual(gap, 10.0)
 
     def test_5wdg_distribution_ignores_outer_capacity_limits(self):
         multi_winding = MultiWindings(
