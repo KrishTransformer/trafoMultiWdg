@@ -209,6 +209,48 @@ def _sum_high_side_material_cost(multi_winding, high_side_sections):
     return total_cost
 
 
+def _sum_high_side_connection_weight(multi_winding, high_side_sections, length=1000):
+    total_weight = 0.0
+    for winding_name, section in high_side_sections:
+        if not section:
+            continue
+        total_weight += get_connection_weight(
+            _section_float(section, "condCrossSec", "hvTotalCondCrossSection", default=0.0),
+            _high_side_material(multi_winding, winding_name),
+            length,
+        )
+    return one_digit_decimal(total_weight)
+
+
+def _sum_high_side_connection_volume(multi_winding, high_side_sections, length=1000):
+    total_volume = 0.0
+    for winding_name, section in high_side_sections:
+        if not section:
+            continue
+        total_volume += displacement_volume(
+            get_connection_weight(
+                _section_float(section, "condCrossSec", "hvTotalCondCrossSection", default=0.0),
+                _high_side_material(multi_winding, winding_name),
+                length,
+            ),
+            8.89 if _is_copper(_high_side_material(multi_winding, winding_name)) else 2.703,
+        )
+    return two_digit_decimal(total_volume)
+
+
+def _sum_high_side_connection_cost(multi_winding, high_side_sections, length=1000):
+    total_cost = 0
+    for winding_name, section in high_side_sections:
+        if not section:
+            continue
+        total_cost += _get_material_cost(multi_winding, _high_side_material(multi_winding, winding_name)) * get_connection_weight(
+            _section_float(section, "condCrossSec", "hvTotalCondCrossSection", default=0.0),
+            _high_side_material(multi_winding, winding_name),
+            length,
+        )
+    return total_cost
+
+
 def _sum_tap_ins_weight(multi_winding, raw_hv_results, high_side_distribution, hv_results, corse_results, fine_results, outer_results):
     if multi_winding.windings == "2 Wdg (LV and HV-Main)":
         return get_tap_ins_weight(
@@ -341,14 +383,14 @@ def calculate_tank_and_oil(
         multi_winding.highVoltage,
         multi_winding.kVA,
         is_oltc,
-        getattr(multi_winding, "wdgToTankGap", None),
+        wdg_tank_gap,
     )
     tank_width = get_tank_width(
         outermost_od,
         multi_winding.highVoltage,
         multi_winding.kVA,
-        getattr(multi_winding, "connectionGap", None),
-        getattr(multi_winding, "wdgToTankGap", None),
+        connection_gap,
+        wdg_tank_gap,
     )
     tank_height = get_tank_height(
         _safe_float(core.limbHt, 0.0),
@@ -357,7 +399,7 @@ def calculate_tank_and_oil(
         multi_winding.highVoltage,
         is_oltc,
         _safe_float(multi_winding.tapStepsPercentage, 0.0),
-        _safe_int(getattr(multi_winding, "topYokeToCoverGap", 0), 0),
+        _safe_int(top_yoke_cover_gap, 0),
     )
     tank_capacity = get_tank_capacity(tank_length, tank_width, tank_height)
     tank_weight = tank_capacity * 0.6
@@ -375,11 +417,7 @@ def calculate_tank_and_oil(
         getattr(multi_winding, "lvConductorMaterial", COPPER),
         300,
     )
-    hv_connection_weight = get_connection_weight(
-        _section_float(hv_results, "condCrossSec", "hvTotalCondCrossSection", default=_safe_float(raw_hv_results.get("hvTotalCondCrossSection"), 0.0)),
-        getattr(multi_winding, "hvConductorMaterial", COPPER),
-        1000,
-    )
+    hv_connection_weight = _sum_high_side_connection_weight(multi_winding, high_side_sections)
     tap_ins_weight = _sum_tap_ins_weight(
         multi_winding,
         raw_hv_results,
@@ -421,10 +459,7 @@ def calculate_tank_and_oil(
         lv_connection_weight,
         8.89 if _is_copper(getattr(multi_winding, "lvConductorMaterial", COPPER)) else 2.703,
     )
-    volume_hv_connection_weight = displacement_volume(
-        hv_connection_weight,
-        8.89 if _is_copper(getattr(multi_winding, "hvConductorMaterial", COPPER)) else 2.703,
-    )
+    volume_hv_connection_weight = _sum_high_side_connection_volume(multi_winding, high_side_sections)
     volume_connection_weight = two_digit_decimal(volume_lv_connection_weight + volume_hv_connection_weight)
     volume_channel = displacement_volume(channel_weight, 7.85)
     volume_insulation = displacement_volume(insulation_weight, 1)
@@ -571,7 +606,7 @@ def calculate_tank_and_oil(
     )
     hv_conductor_cost = math.ceil(
         _sum_high_side_material_cost(multi_winding, high_side_sections)
-        + (_get_material_cost(multi_winding, getattr(multi_winding, "hvConductorMaterial", COPPER)) * hv_connection_weight)
+        + _sum_high_side_connection_cost(multi_winding, high_side_sections)
     )
     conductor_cost = int(lv_conductor_cost + hv_conductor_cost)
     core_cost = int(math.ceil(cost_defaults["coreCostPerKg"] * weight_core))

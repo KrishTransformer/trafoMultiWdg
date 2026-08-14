@@ -855,6 +855,70 @@ def _calculate_disc(ctx, winding):
         turns_per_disc,
         winding_length,
     )
+    if winding.radialParallelCond is None and winding.condHeight is None:
+        while stray_loss > 10.0:
+            radial_parallel += 1
+            number_of_conductors = radial_parallel * axial_parallel
+            cross_sec_per_conductor = get_x_sec_per_conductor(conductor_cross_section, number_of_conductors)
+            height = get_height(cross_sec_per_conductor, breadth)
+            height_insulated = get_height_insulated(height, conductor_insulation)
+            revised_cond_cross_section = get_revised_conductor_cross_section(breadth, height)
+            total_cond_cross_section = two_digit_decimal(revised_cond_cross_section * number_of_conductors)
+            revised_current_density = three_digit_decimal(
+                ctx["lvCurrentPerPhase"] / max((revised_cond_cross_section * number_of_conductors), 0.1)
+            )
+            radial_thickness = get_disc_radial_thickness(
+                height,
+                radial_parallel,
+                conductor_insulation,
+                INSULATION_EXPANSION,
+                turns_per_disc,
+                no_of_ducts,
+                duct_thickness,
+            )
+            if radial_thickness >= 70 and winding.ducts is None and no_of_ducts == 0:
+                no_of_ducts = 1
+                default_disc_duct = 3 if ctx["kVA"] <= 5000 else 4
+                duct_thickness = max(winding.ductSize or default_disc_duct, default_disc_duct)
+                radial_thickness = get_disc_radial_thickness(
+                    height,
+                    radial_parallel,
+                    conductor_insulation,
+                    INSULATION_EXPANSION,
+                    turns_per_disc,
+                    no_of_ducts,
+                    duct_thickness,
+                )
+            lv_id = get_id(ctx["coreDiameter"], ctx["coreGap"])
+            lv_od = get_od(lv_id, radial_thickness)
+            lv_lmt = get_lmt(lv_id, lv_od)
+            wire_length = get_wire_length(lv_lmt, ctx["lvTurnsPerPhase"], 3, number_of_conductors)
+            r75 = get_r75(ctx["material"], lv_lmt, ctx["lvTurnsPerPhase"], total_cond_cross_section)
+            r26 = get_r26(r75, ctx["material"])
+            bare_weight = get_bare_weight(lv_lmt, ctx["lvTurnsPerPhase"], total_cond_cross_section, ctx["material"])
+            insulated_weight = get_insulated_weight(
+                breadth_insulated,
+                height_insulated,
+                breadth,
+                height,
+                ctx["material"],
+                bare_weight,
+                bool(winding.isEnamel),
+            )
+            procurement_weight = get_procurement_weight(insulated_weight, number_of_conductors)
+            stray_loss = get_stray_loss_for_disc(
+                breadth,
+                height,
+                no_of_discs,
+                radial_parallel,
+                axial_parallel,
+                conductor_insulation,
+                ctx["material"],
+                turns_per_disc,
+                winding_length,
+            )
+            if radial_parallel > 32:
+                break
     load_loss = get_load_loss(ctx["material"], bare_weight, revised_current_density, stray_loss)
     v0 = get_v0(revised_current_density, revised_cond_cross_section, stray_loss, height_insulated, ctx["windingTemp"], ctx["ambientTemp"])
     psi = get_psi(breadth_insulated, radial_thickness, duct_thickness, no_of_ducts)
