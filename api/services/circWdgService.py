@@ -1417,6 +1417,14 @@ def _build_phase_voltage_division(section_allocations):
     }
 
 
+def _build_post_hv_filling_gaps(corse_results, fine_results, outer_results):
+    return {
+        "corse": safe_float((corse_results or {}).get("fillingGap"), 0.0),
+        "fine": safe_float((fine_results or {}).get("fillingGap"), 0.0),
+        "outer": safe_float((outer_results or {}).get("fillingGap"), 0.0),
+    }
+
+
 def _build_calculated_radial_gaps(radial_build):
     return {
         item["gapField"]: safe_float(item.get("gapFromPrevious"), 0.0)
@@ -1797,6 +1805,7 @@ def calculate_circ_wdg(multi_winding):
     total_load_loss = next_integer(lv_results["lvLoadLoss"] + total_high_side_load_loss + recomputed_tank_loss)
     phase_voltage_division = _build_phase_voltage_division(high_side_distribution)
     calculated_radial_gaps = _build_calculated_radial_gaps(coil_dimension_scale["radialBuild"])
+    filling_gaps = _build_post_hv_filling_gaps(corse_results, fine_results, outer_results)
     impedance_response = _build_impedance_response(impedance_summary)
     lv_winding_response = _with_named_volts_per_phase(
         lv_results,
@@ -1860,6 +1869,7 @@ def calculate_circ_wdg(multi_winding):
             "phaseVoltages": phase_voltage_division,
             "phaseVoltageDivision": phase_voltage_division,
             "calculatedRadialGaps": calculated_radial_gaps,
+            "fillingGaps": filling_gaps,
             "lvWinding": lv_winding_response,
             "hvWinding": hv_winding_response,
             "corseWinding": corse_results,

@@ -39,6 +39,7 @@ from api.services.windingFormulae import (
 
 INSULATION_COMPRESSION = 0.93
 INSULATION_EXPANSION = 1.07
+POST_HV_FILLING_GAP = 20.0
 
 
 def safe_winding(winding):
@@ -529,7 +530,10 @@ def build_hv_section_results(
         seed_dimensions.get("previousEndClearance"),
         safe_float(hv_source.get("hvEndClearance"), 0.0),
     )
-    section_end_clearance = previous_end_clearance + 20.0
+    post_hv_section = section_name in {"corse", "fine", "outer"}
+    section_end_clearance = previous_end_clearance + 20.0 if post_hv_section else previous_end_clearance
+    filling_gap = POST_HV_FILLING_GAP if post_hv_section else 0.0
+    outer_single_layer = section_name == "outer"
     base_winding_length = safe_float(
         seed_dimensions.get("previousWindingLength"),
         safe_float(hv_source.get("hvWindingLength"), 0.0),
@@ -541,6 +545,7 @@ def build_hv_section_results(
             safe_float(limb_height, 0.0)
             - section_end_clearance
             - safe_float(perma_wood_ring, 0.0),
+            - filling_gap,
         )
     transposition = 20 if winding_type == "HELICAL" and radial_parallel > 1 else 0
     revised_cond_cross_section = (
@@ -559,21 +564,36 @@ def build_hv_section_results(
         is_round = False
         disc_duct_size = safe_float(hv_source.get("hvDiscDuctsSize"), 0.0)
         user_disc_dimensions_provided = user_cond_breadth is not None or user_cond_height is not None
-        disc_geometry = _select_disc_conductor_geometry(
-            allocated_turns,
-            available_winding_length,
-            cross_sec_per_conductor,
-            conductor_insulation,
-            axial_parallel,
-            disc_duct_size,
-            user_cond_breadth,
-            user_cond_height,
-        )
-        breadth = disc_geometry["breadth"]
-        height = disc_geometry["height"]
-        breadth_insulated = disc_geometry["breadthInsulated"]
-        turns_per_layer = float(disc_geometry["noOfDiscs"])
-        number_of_layers = float(disc_geometry["turnsPerDisc"])
+        if outer_single_layer:
+            turns_per_layer = max(1.0, safe_float(allocated_turns, 1.0))
+            number_of_layers = 1.0
+            if not user_disc_dimensions_provided and turns_per_layer > 0:
+                max_breadth = (
+                    (
+                        available_winding_length
+                        - ((turns_per_layer - 1) * disc_duct_size * INSULATION_COMPRESSION)
+                    )
+                    / turns_per_layer
+                ) - (conductor_insulation * INSULATION_COMPRESSION)
+                breadth = one_digit_decimal(max(0.1, max_breadth))
+                height = get_height(cross_sec_per_conductor, breadth)
+                breadth_insulated = get_height_insulated(breadth, conductor_insulation)
+        else:
+            disc_geometry = _select_disc_conductor_geometry(
+                allocated_turns,
+                available_winding_length,
+                cross_sec_per_conductor,
+                conductor_insulation,
+                axial_parallel,
+                disc_duct_size,
+                user_cond_breadth,
+                user_cond_height,
+            )
+            breadth = disc_geometry["breadth"]
+            height = disc_geometry["height"]
+            breadth_insulated = disc_geometry["breadthInsulated"]
+            turns_per_layer = float(disc_geometry["noOfDiscs"])
+            number_of_layers = float(disc_geometry["turnsPerDisc"])
         winding_length = get_disc_winding_length(
             breadth,
             conductor_insulation,
@@ -581,11 +601,11 @@ def build_hv_section_results(
             int(turns_per_layer),
             disc_duct_size,
         )
-        if not user_disc_dimensions_provided:
+        if outer_single_layer or not user_disc_dimensions_provided:
             while winding_length > available_winding_length and breadth > 0.1:
-                breadth = one_digit_decimal(breadth - 0.1)
+                breadth = one_digit_decimal(max(0.1, breadth - 0.1))
                 height = get_height(cross_sec_per_conductor, breadth)
-                breadth_insulated = one_digit_decimal(breadth + conductor_insulation)
+                breadth_insulated = get_height_insulated(breadth, conductor_insulation)
                 winding_length = get_disc_winding_length(
                     breadth,
                     conductor_insulation,
@@ -643,7 +663,23 @@ def build_hv_section_results(
             winding_length,
         )
     else:
-        if safe_float(user_no_of_layers, 0.0) > 0:
+        if outer_single_layer:
+            number_of_layers = 1.0
+            turns_per_layer = max(1.0, safe_float(allocated_turns, 1.0))
+            if (
+                user_cond_breadth is None
+                and user_cond_height is None
+                and user_conductor_diameter is None
+            ):
+                max_breadth_insulated = available_winding_length / max(
+                    (turns_per_layer + 1) * max(axial_parallel, 1),
+                    1.0,
+                )
+                breadth = one_digit_decimal(max(0.1, max_breadth_insulated - conductor_insulation))
+                height = breadth if is_round else get_height(cross_sec_per_conductor, breadth)
+                breadth_insulated = get_height_insulated(breadth, conductor_insulation)
+                height_insulated = get_height_insulated(height, conductor_insulation)
+        elif safe_float(user_no_of_layers, 0.0) > 0:
             number_of_layers = safe_float(user_no_of_layers, 0.0)
             turns_per_layer = max(1.0, two_digit_decimal(allocated_turns / max(number_of_layers, 1.0)))
         elif safe_float(user_turns_per_layer, 0.0) > 0:
@@ -665,11 +701,17 @@ def build_hv_section_results(
             )
         winding_length = next_integer((turns_per_layer + 1) * (breadth_insulated * axial_parallel))
         while winding_length > available_winding_length and turns_per_layer > 1:
-            turns_per_layer -= 1
-            turns_per_layer, number_of_layers = _adjust_helical_section_layers(
-                allocated_turns,
-                turns_per_layer,
-            )
+            if outer_single_layer:
+                breadth = one_digit_decimal(max(0.1, breadth - 0.1))
+                height = get_height(cross_sec_per_conductor, breadth)
+                breadth_insulated = get_height_insulated(breadth, conductor_insulation)
+                height_insulated = get_height_insulated(height, conductor_insulation)
+            else:
+                turns_per_layer -= 1
+                turns_per_layer, number_of_layers = _adjust_helical_section_layers(
+                    allocated_turns,
+                    turns_per_layer,
+                )
             winding_length = next_integer((turns_per_layer + 1) * (breadth_insulated * axial_parallel))
         end_clearance = section_end_clearance
         inter_layer_insulation = safe_float(
@@ -840,6 +882,17 @@ def build_hv_section_results(
                     lmt,
                     dry_type,
                 )
+    if outer_single_layer:
+        number_of_layers = 1.0
+        turns_per_layer = safe_float(allocated_turns, 0.0)
+    if limb_height is not None and post_hv_section:
+        end_clearance = max(
+            0.0,
+            safe_float(limb_height, 0.0)
+            - safe_float(perma_wood_ring, 0.0)
+            - filling_gap
+            - safe_float(winding_length, 0.0),
+        )
     r75 = get_r75(material, lmt, allocated_turns, total_cond_cross_section) if total_cond_cross_section > 0 else 0.0
     r26 = get_r26(r75, material) if r75 else 0.0
 
@@ -867,6 +920,7 @@ def build_hv_section_results(
         "noOfLayers": number_of_layers,
         "windingLength": winding_length,
         "endClearance": end_clearance,
+        "fillingGap": filling_gap,
         "radialParallelCond": radial_parallel,
         "axialParallelCond": axial_parallel,
         "noOfConductors": no_of_conductors,

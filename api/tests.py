@@ -192,15 +192,31 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         self.assertEqual(results["phaseVoltageDivision"]["outer"], 6600)
         self.assertEqual(results["outerWinding"]["voltsPerPhase"], 6600.0)
         self.assertEqual(results["calculatedRadialGaps"]["hvToOuter"], 18.0)
+        self.assertEqual(results["outerWinding"]["noOfLayers"], 1.0)
         self.assertEqual(
-            results["outerWinding"]["endClearance"],
-            results["hvWinding"]["endClearance"] + 20.0,
+            results["outerWinding"]["turnsPerLayer"],
+            results["outerWinding"]["turnsPerPhase"],
+        )
+        self.assertEqual(results["outerWinding"]["fillingGap"], 20.0)
+        self.assertEqual(results["fillingGaps"]["outer"], 20.0)
+        self.assertEqual(response.json()["inputs"]["windingModels"]["outer"]["noOfLayers"], 1.0)
+        self.assertEqual(
+            response.json()["inputs"]["windingModels"]["outer"]["turnsPerLayer"],
+            response.json()["inputs"]["windingModels"]["outer"]["turnsPerPhase"],
         )
         self.assertLessEqual(
             results["outerWinding"]["windingLength"],
             results["core"]["limbHt"]
             - results["outerWinding"]["endClearance"]
-            - results["lvWinding"]["permaWoodRing"],
+            - results["lvWinding"]["permaWoodRing"]
+            - results["outerWinding"]["fillingGap"]
+        )
+        self.assertEqual(
+            results["outerWinding"]["windingLength"]
+            + results["outerWinding"]["endClearance"]
+            + results["lvWinding"]["permaWoodRing"]
+            + results["outerWinding"]["fillingGap"],
+            results["core"]["limbHt"],
         )
         self.assertNotEqual(
             results["outerWinding"]["windingLength"],
@@ -735,13 +751,35 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         corse_end_clearance = response.json()["results"]["corseWinding"]["endClearance"]
         fine_end_clearance = response.json()["results"]["fineWinding"]["endClearance"]
         outer_end_clearance = response.json()["results"]["outerWinding"]["endClearance"]
-        self.assertEqual(corse_end_clearance, hv_end_clearance + 20.0)
-        self.assertEqual(fine_end_clearance, corse_end_clearance + 20.0)
-        self.assertEqual(outer_end_clearance, fine_end_clearance + 20.0)
+        self.assertEqual(response.json()["results"]["fillingGaps"]["corse"], 20.0)
+        self.assertEqual(response.json()["results"]["fillingGaps"]["fine"], 20.0)
+        self.assertEqual(response.json()["results"]["fillingGaps"]["outer"], 20.0)
+        self.assertEqual(response.json()["results"]["corseWinding"]["fillingGap"], 20.0)
+        self.assertEqual(response.json()["results"]["fineWinding"]["fillingGap"], 20.0)
+        self.assertEqual(response.json()["results"]["outerWinding"]["fillingGap"], 20.0)
+        self.assertEqual(response.json()["results"]["outerWinding"]["noOfLayers"], 1.0)
+        self.assertEqual(
+            response.json()["results"]["outerWinding"]["turnsPerLayer"],
+            response.json()["results"]["outerWinding"]["turnsPerPhase"],
+        )
+        self.assertEqual(response.json()["inputs"]["windingModels"]["outer"]["noOfLayers"], 1.0)
+        self.assertEqual(
+            response.json()["inputs"]["windingModels"]["outer"]["turnsPerLayer"],
+            response.json()["inputs"]["windingModels"]["outer"]["turnsPerPhase"],
+        )
         self.assertEqual(
             response.json()["inputs"]["windingModels"]["outer"]["endClearances"],
             outer_end_clearance,
         )
+        for winding_name in ("corse", "fine", "outer"):
+            winding = response.json()["results"][f"{winding_name}Winding"]
+            self.assertEqual(
+                winding["windingLength"]
+                + winding["endClearance"]
+                + response.json()["results"]["lvWinding"]["permaWoodRing"]
+                + winding["fillingGap"],
+                response.json()["results"]["core"]["limbHt"],
+            )
         self.assertEqual(
             response.json()["results"]["phaseVoltageDivision"]["corse"],
             int(response.json()["inputs"]["windingModels"]["corse"]["terminal"]),
@@ -1110,25 +1148,41 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
+        results = response.json()["results"]
         for winding_name in ("corse", "fine"):
             model = response.json()["inputs"]["windingModels"][winding_name]
-            result = response.json()["results"][f"{winding_name}Winding"]
-            self.assertEqual(model["turnsPerLayer"], 204.0)
-            self.assertEqual(model["noOfLayers"], 1.0)
+            result = results[f"{winding_name}Winding"]
+            self.assertEqual(model["turnsPerLayer"], result["turnsPerLayer"])
+            self.assertEqual(model["noOfLayers"], result["noOfLayers"])
             self.assertNotEqual(model["noOfLayers"], model["turnsPerPhase"])
-            self.assertEqual(model["endClearances"], 49.0)
-            self.assertEqual(result["turnsPerLayer"], 204.0)
-            self.assertEqual(result["noOfLayers"], 1.0)
-            self.assertEqual(result["endClearance"], 49.0)
+            self.assertEqual(model["endClearances"], result["endClearance"])
+            self.assertGreater(result["turnsPerLayer"], 0)
+            self.assertGreater(result["noOfLayers"], 0)
+            self.assertEqual(result["fillingGap"], 20.0)
+            self.assertEqual(
+                result["windingLength"]
+                + result["endClearance"]
+                + results["lvWinding"]["permaWoodRing"]
+                + result["fillingGap"],
+                results["core"]["limbHt"],
+            )
 
         outer_model = response.json()["inputs"]["windingModels"]["outer"]
-        outer_result = response.json()["results"]["outerWinding"]
-        self.assertEqual(outer_model["turnsPerLayer"], 204.0)
-        self.assertEqual(outer_model["endClearances"], 49.0)
+        outer_result = results["outerWinding"]
+        self.assertEqual(outer_model["turnsPerLayer"], outer_result["turnsPerLayer"])
+        self.assertEqual(outer_model["endClearances"], outer_result["endClearance"])
         self.assertEqual(outer_model["noOfLayers"], 1.0)
-        self.assertEqual(outer_result["turnsPerLayer"], 204.0)
-        self.assertEqual(outer_result["endClearance"], 49.0)
+        self.assertEqual(outer_result["turnsPerLayer"], outer_result["turnsPerPhase"])
+        self.assertEqual(outer_result["fillingGap"], 20.0)
+        self.assertEqual(
+            outer_result["windingLength"]
+            + outer_result["endClearance"]
+            + results["lvWinding"]["permaWoodRing"]
+            + outer_result["fillingGap"],
+            results["core"]["limbHt"],
+        )
         self.assertEqual(outer_result["noOfLayers"], 1.0)
+        self.assertEqual(results["fillingGaps"], {"corse": 20.0, "fine": 20.0, "outer": 20.0})
 
     def test_multi_wdg_extra_windings_number_in_parallel_matches_lv_hv_format(self):
         payload = {
@@ -1566,12 +1620,17 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         self.assertGreater(outer_results["loadLoss"], 0)
         self.assertIn("discArrangement", outer_results)
         self.assertIn("F +", outer_results["discArrangement"])
+        self.assertEqual(outer_results["noOfLayers"], 1.0)
+        self.assertEqual(outer_results["turnsPerLayer"], outer_results["turnsPerPhase"])
+        self.assertEqual(outer_results["fillingGap"], 20.0)
         self.assertTrue(fine_results["implemented"])
         self.assertEqual(fine_results["windingType"], "HELICAL")
         self.assertEqual(fine_results["voltsPerPhase"], 270)
+        self.assertEqual(fine_results["fillingGap"], 20.0)
         self.assertTrue(corse_results["implemented"])
         self.assertEqual(corse_results["windingType"], "HELICAL")
         self.assertEqual(corse_results["voltsPerPhase"], 540)
+        self.assertEqual(corse_results["fillingGap"], 20.0)
         self.assertEqual(outer_results["axialParallelCond"], 1)
 
     def test_outer_winding_service_uses_distinct_disc_branch(self):
@@ -1602,9 +1661,13 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         disc_results = calculate_outer_windings(multi_winding, hv_results, outer_seed, 60, 270)
 
         self.assertFalse(disc_results["breadth"] < 5 and disc_results["height"] > 1.7)
-        self.assertNotEqual(helical_results["turnsPerLayer"], disc_results["turnsPerLayer"])
+        self.assertEqual(helical_results["noOfLayers"], 1.0)
+        self.assertEqual(disc_results["noOfLayers"], 1.0)
+        self.assertEqual(helical_results["turnsPerLayer"], helical_results["turnsPerPhase"])
+        self.assertEqual(disc_results["turnsPerLayer"], disc_results["turnsPerPhase"])
+        self.assertNotEqual(helical_results["breadth"], disc_results["breadth"])
         self.assertNotEqual(helical_results["windingLength"], disc_results["windingLength"])
-        self.assertNotEqual(helical_results["strayLoss"], disc_results["strayLoss"])
+        self.assertNotEqual(helical_results["loadLoss"], disc_results["loadLoss"])
 
     def test_hv_disc_winding_model_forces_single_axial_parallel_in_response(self):
         payload = {
