@@ -556,6 +556,8 @@ def calculate_hv_windings(multi_winding, lv_results):
     else:
         gradient = get_hv_gradient(load_loss_lowest, (no_of_ducts * 2) + 2, winding_length, transposition, hv_lmt, dry_type)
 
+    end_clearance = max(0, window_height - winding_length - lv_results["permaWoodRing"])
+
     no_of_steps = tap_positive + tap_negative + 1
     turns_per_tap = get_turns_at_tap(multi_winding.highVoltage, no_of_steps, tap_negative, tap_step_percent, volts_per_turn, vector_group)
     tap_voltages = get_tap_voltages(multi_winding.highVoltage, tap_negative, tap_positive, tap_step_percent)

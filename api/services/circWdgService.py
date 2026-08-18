@@ -923,6 +923,12 @@ def _build_hv_main_results(multi_winding, lv_results, hv_results, allocation):
         limb_height=safe_float(getattr(getattr(multi_winding, "core", None), "limbHt", None), safe_float(lv_results["windowHeight"], 0.0)),
         perma_wood_ring=safe_float(lv_results["permaWoodRing"], 0.0),
     )
+    section_results["endClearance"] = max(
+        0.0,
+        safe_float(getattr(getattr(multi_winding, "core", None), "limbHt", None), safe_float(lv_results["windowHeight"], 0.0))
+        - safe_float(section_results.get("windingLength"), 0.0)
+        - safe_float(lv_results["permaWoodRing"], 0.0),
+    )
     section_results["hvTurnsPerTap"] = hv_results.get("hvTurnsPerTap", 0.0)
     section_results["hvHighestTapVoltage"] = hv_results.get("hvHighestTapVoltage", 0.0)
     section_results["hvLowestTapVoltage"] = hv_results.get("hvLowestTapVoltage", 0.0)
