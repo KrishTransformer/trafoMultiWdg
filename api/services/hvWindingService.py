@@ -210,7 +210,7 @@ def calculate_hv_windings(multi_winding, lv_results):
         multi_winding.kVA,
         multi_winding.highVoltage,
         vector_group,
-        winding.endClearances if winding.endClearances > 0 else None,
+        winding.endClearances if winding.endClearances is not None and winding.endClearances > 0 else None,
         dry_type,
         False,
     )

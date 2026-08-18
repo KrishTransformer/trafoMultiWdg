@@ -190,6 +190,29 @@ def _default_coil_dimensions(multi_winding):
     return coil_dimensions
 
 
+def _resolve_optional_current_density(multi_winding, winding_name, active_windings, trans_cost_type, dry_type, dry_temp_class):
+    if winding_name not in active_windings:
+        return None
+
+    current_density_attr = f"{winding_name}CurrentDensity"
+    conductor_material_attr = f"{winding_name}ConductorMaterial"
+    current_density_value = getattr(multi_winding, current_density_attr, None)
+    current_density_override = (
+        current_density_value
+        if current_density_value is not None and current_density_value > 0
+        else multi_winding.hvCurrentDensity
+    )
+
+    return get_current_density(
+        getattr(multi_winding, conductor_material_attr),
+        trans_cost_type,
+        dry_type,
+        dry_temp_class,
+        False,
+        current_density_override,
+    )
+
+
 def _normalize_winding_type(multi_winding, attr_name, default_value):
     value = getattr(multi_winding, attr_name, None)
     return value if value else default_value
@@ -1195,6 +1218,7 @@ def _apply_defaults(multi_winding):
     dry_temp_class = getattr(multi_winding, "dryTempClass", CLASS_B)
     trans_cost_type = getattr(multi_winding, "transCostType", ECONOMIC)
     multi_winding.windings = _normalize_winding_selection(getattr(multi_winding, "windings", None))
+    active_windings = WINDING_SELECTIONS.get(multi_winding.windings, WINDING_SELECTIONS[DEFAULT_WINDING_SELECTION])
 
     multi_winding.frequency = get_frequency(multi_winding.frequency)
     multi_winding.vectorGroup = get_vector_group(multi_winding.vectorGroup)
@@ -1228,29 +1252,29 @@ def _apply_defaults(multi_winding):
         False,
         multi_winding.hvCurrentDensity if multi_winding.hvCurrentDensity > 0 else None,
     )
-    multi_winding.corseCurrentDensity = get_current_density(
-        multi_winding.corseConductorMaterial,
+    multi_winding.corseCurrentDensity = _resolve_optional_current_density(
+        multi_winding,
+        "corse",
+        active_windings,
         trans_cost_type,
         dry_type,
         dry_temp_class,
-        False,
-        multi_winding.corseCurrentDensity if getattr(multi_winding, "corseCurrentDensity", 0) > 0 else multi_winding.hvCurrentDensity,
     )
-    multi_winding.fineCurrentDensity = get_current_density(
-        multi_winding.fineConductorMaterial,
+    multi_winding.fineCurrentDensity = _resolve_optional_current_density(
+        multi_winding,
+        "fine",
+        active_windings,
         trans_cost_type,
         dry_type,
         dry_temp_class,
-        False,
-        multi_winding.fineCurrentDensity if getattr(multi_winding, "fineCurrentDensity", 0) > 0 else multi_winding.hvCurrentDensity,
     )
-    multi_winding.outerCurrentDensity = get_current_density(
-        multi_winding.outerConductorMaterial,
+    multi_winding.outerCurrentDensity = _resolve_optional_current_density(
+        multi_winding,
+        "outer",
+        active_windings,
         trans_cost_type,
         dry_type,
         dry_temp_class,
-        False,
-        multi_winding.outerCurrentDensity if getattr(multi_winding, "outerCurrentDensity", 0) > 0 else multi_winding.hvCurrentDensity,
     )
     multi_winding.buildFactor = get_build_factor(
         multi_winding.kVA,

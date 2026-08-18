@@ -393,6 +393,11 @@ def build_hv_section_results(
     user_turns_per_layer = raw_winding.turnsPerLayer
     user_no_of_layers = raw_winding.noOfLayers
     user_radial_parallel = raw_winding.radialParallelCond
+    user_conductor_geometry_provided = (
+        user_cond_breadth is not None
+        or user_cond_height is not None
+        or user_conductor_diameter is not None
+    )
     post_hv_section = section_name in {"corse", "fine", "outer"}
     winding = seed_section_winding(winding, hv_source, winding_type, section_name=section_name)
     allocated_turns = safe_float(allocated_turns, 0.0)
@@ -581,7 +586,7 @@ def build_hv_section_results(
     if winding_type == "DISC":
         is_round = False
         disc_duct_size = safe_float(hv_source.get("hvDiscDuctsSize"), 0.0)
-        user_disc_dimensions_provided = user_cond_breadth is not None or user_cond_height is not None
+        user_disc_dimensions_provided = user_conductor_geometry_provided
         if outer_single_layer:
             turns_per_layer = max(1.0, safe_float(allocated_turns, 1.0))
             number_of_layers = 1.0
@@ -619,7 +624,7 @@ def build_hv_section_results(
             int(turns_per_layer),
             disc_duct_size,
         )
-        if outer_single_layer or not user_disc_dimensions_provided:
+        if not user_disc_dimensions_provided:
             while winding_length > available_winding_length and breadth > 0.1:
                 breadth = one_digit_decimal(max(0.1, breadth - 0.1))
                 height = get_height(cross_sec_per_conductor, breadth)
@@ -784,6 +789,8 @@ def build_hv_section_results(
         winding_length = next_integer((turns_per_layer + 1) * (breadth_insulated * axial_parallel))
         while winding_length > available_winding_length and turns_per_layer > 1:
             if outer_single_layer:
+                if user_conductor_geometry_provided:
+                    break
                 if breadth <= 0.1:
                     break
                 breadth = one_digit_decimal(max(0.1, breadth - 0.1))

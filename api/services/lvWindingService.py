@@ -216,7 +216,7 @@ def _build_base_context(multi_winding, winding):
     end_clearance = get_lv_end_clearance(
         multi_winding.kVA,
         vector_group,
-        winding.endClearances if winding.endClearances > 0 else None,
+        winding.endClearances if winding.endClearances is not None and winding.endClearances > 0 else None,
         dry_type,
         multi_winding.lowVoltage,
         multi_winding.highVoltage,

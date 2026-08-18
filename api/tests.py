@@ -673,6 +673,133 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         self.assertEqual(response.json()["inputs"]["tapSteps"]["positive"], 4)
         self.assertEqual(response.json()["inputs"]["tapSteps"]["negative"], 12)
 
+    def test_4wdg_c_ignores_null_fine_inputs(self):
+        payload = {
+            "designId": None,
+            "windingSelection": "4 Wdg (LV, HV-Main, Corse and Outer)",
+            "kVA": 25000,
+            "kValue": 0.45,
+            "fluxDensity": 1.6888,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 33000,
+            "highVoltage": 132000,
+            "tapStepsPercentage": 1.25,
+            "tapStepPositive": 4,
+            "tapStepNegative": 12,
+            "lvWindingType": "DISC",
+            "hvWindingType": "DISC",
+            "corseWindingType": "HELICAL",
+            "fineWindingType": None,
+            "outerWindingType": "HELICAL",
+            "lvCurrentDensity": 3.63,
+            "hvCurrentDensity": 3.63,
+            "corseCurrentDensity": 3.63,
+            "fineCurrentDensity": None,
+            "outerCurrentDensity": 3.63,
+            "lvWindings": {
+                "turnsPerPhase": None,
+                "conductorSizes": "",
+                "condInsulation": None,
+                "noInParallel": "",
+                "noOfLayers": None,
+                "endClearances": None,
+                "ducts": None,
+                "ductSize": None,
+                "interLayerInsulation": None,
+                "radialParallelCond": None,
+                "axialParallelCond": None,
+                "condBreadth": None,
+                "condHeight": None,
+                "conductorDiameter": None,
+                "isConductorRound": None,
+                "isEnamel": False,
+            },
+            "hvWindings": {
+                "turnsPerPhase": None,
+                "conductorSizes": "",
+                "condInsulation": None,
+                "noInParallel": "",
+                "noOfLayers": None,
+                "endClearances": None,
+                "ducts": None,
+                "ductSize": None,
+                "interLayerInsulation": None,
+                "radialParallelCond": None,
+                "axialParallelCond": None,
+                "condBreadth": None,
+                "condHeight": None,
+                "conductorDiameter": None,
+                "isConductorRound": None,
+                "isEnamel": False,
+            },
+            "corseWindings": {
+                "turnsPerPhase": None,
+                "conductorSizes": "",
+                "condInsulation": None,
+                "noInParallel": "",
+                "noOfLayers": None,
+                "endClearances": None,
+                "ducts": None,
+                "ductSize": None,
+                "interLayerInsulation": None,
+                "radialParallelCond": None,
+                "axialParallelCond": None,
+                "condBreadth": None,
+                "condHeight": None,
+                "conductorDiameter": None,
+                "isConductorRound": None,
+                "isEnamel": False,
+            },
+            "fineWindings": None,
+            "core": {
+                "coreDia": None,
+                "limbHt": None,
+            },
+            "outerWindings": {
+                "turnsPerPhase": None,
+                "conductorSizes": "",
+                "condInsulation": None,
+                "noInParallel": "",
+                "noOfLayers": None,
+                "endClearances": None,
+                "ducts": None,
+                "ductSize": None,
+                "interLayerInsulation": None,
+                "radialParallelCond": None,
+                "axialParallelCond": None,
+                "condBreadth": None,
+                "condHeight": None,
+                "conductorDiameter": None,
+                "isConductorRound": None,
+                "isEnamel": False,
+            },
+            "cost": {
+                "copperCostPerKg": 850,
+                "aluminiumCostPerKg": 235,
+                "coreCostPerKg": 250,
+                "steelCostPerKg": 90,
+                "oilCostPerKg": 80,
+                "insulationCostPerKg": 170,
+                "radiatorCostPerKg": 200,
+            },
+            "radialGaps": {
+                "coreToLv": None,
+                "lvToHv": None,
+                "hvToCorse": None,
+                "corseToOuter": None,
+            },
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["selectedCode"], "4_WDG_C")
+        self.assertIsNone(response.json()["inputs"]["currentDensity"]["fine"])
+
     def test_4wdg_c_hv_main_end_clearance_rebalances_to_match_limb_height(self):
         payload = {
             "designId": None,
@@ -1246,6 +1373,105 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         self.assertIn("includedHvWindings", impedance["lowestTap"])
         self.assertIn("includedHvWindings", impedance["normalTap"])
         self.assertIn("includedHvWindings", impedance["highestTap"])
+
+    def test_multi_wdg_accepts_editable_conductor_fields_for_all_windings(self):
+        payload = {
+            "windingSelection": "5 Wdg (LV, HV-Main, Corse, Fine and Outer)",
+            "kVA": 100,
+            "kValue": 0.45,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 433,
+            "highVoltage": 11000,
+            "tapStepsPercentage": 2.5,
+            "tapStepPositive": 2,
+            "tapStepNegative": 2,
+            "lvWindingType": "Helical",
+            "hvWindingType": "Helical",
+            "corseWindingType": "Helical",
+            "fineWindingType": "Helical",
+            "outerWindingType": "Helical",
+            "lvWindings": {
+                "condBreadth": 6.2,
+                "condHeight": 2.8,
+                "condInsulation": 0.4,
+                "radialParallelCond": 2,
+                "axialParallelCond": 1,
+                "isConductorRound": False,
+                "isEnamel": False,
+            },
+            "hvWindings": {
+                "condBreadth": 5.4,
+                "condHeight": 2.4,
+                "condInsulation": 0.5,
+                "radialParallelCond": 3,
+                "axialParallelCond": 1,
+                "isConductorRound": False,
+                "isEnamel": False,
+            },
+            "corseWindings": {
+                "turnsPerPhase": 220,
+                "condBreadth": 4.8,
+                "condHeight": 2.1,
+                "condInsulation": 0.3,
+                "radialParallelCond": 2,
+                "axialParallelCond": 1,
+                "isConductorRound": False,
+                "isEnamel": False,
+            },
+            "fineWindings": {
+                "turnsPerPhase": 120,
+                "condBreadth": 4.2,
+                "condHeight": 1.9,
+                "condInsulation": 0.3,
+                "radialParallelCond": 1,
+                "axialParallelCond": 1,
+                "isConductorRound": False,
+                "isEnamel": False,
+            },
+            "outerWindings": {
+                "turnsPerPhase": 100,
+                "condBreadth": 3.8,
+                "condHeight": 1.7,
+                "condInsulation": 0.3,
+                "radialParallelCond": 1,
+                "axialParallelCond": 1,
+                "isConductorRound": False,
+                "isEnamel": False,
+            },
+            "radialGaps": {
+                "coreToLv": 5,
+                "lvToHv": 10,
+                "hvToCorse": 8,
+                "corseToFine": 6,
+                "fineToOuter": 10,
+            },
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        winding_models = response.json()["inputs"]["windingModels"]
+        expected_by_winding = {
+            "lv": payload["lvWindings"],
+            "hv": payload["hvWindings"],
+            "corse": payload["corseWindings"],
+            "fine": payload["fineWindings"],
+            "outer": payload["outerWindings"],
+        }
+
+        for winding_name, expected in expected_by_winding.items():
+            model = winding_models[winding_name]
+            self.assertEqual(model["condBreadth"], expected["condBreadth"])
+            self.assertEqual(model["condHeight"], expected["condHeight"])
+            self.assertEqual(model["condInsulation"], expected["condInsulation"])
+            self.assertEqual(model["radialParallelCond"], expected["radialParallelCond"])
+            self.assertEqual(model["axialParallelCond"], expected["axialParallelCond"])
+            self.assertEqual(model["isConductorRound"], expected["isConductorRound"])
+            self.assertEqual(model["isEnamel"], expected["isEnamel"])
 
     def test_multi_wdg_impedance_delta_uses_lv_to_hv_gap(self):
         payload = {
