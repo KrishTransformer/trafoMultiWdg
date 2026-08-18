@@ -613,6 +613,66 @@ class MultiWdgCalculatorEndpointTests(TestCase):
             "1mm x 3 PB + rest Oil",
         )
 
+    def test_4wdg_c_accepts_numeric_tap_inputs_as_strings(self):
+        payload = {
+            "designId": None,
+            "windingSelection": "4 Wdg (LV, HV-Main, Corse and Outer)",
+            "kVA": 25000,
+            "kValue": 0.45,
+            "fluxDensity": 1.6888,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 33000,
+            "highVoltage": 132000,
+            "tapStepsPercentage": "1.25",
+            "tapStepPositive": "4",
+            "tapStepNegative": 12,
+            "lvWindingType": "DISC",
+            "hvWindingType": "DISC",
+            "corseWindingType": "HELICAL",
+            "fineWindingType": "HELICAL",
+            "outerWindingType": "HELICAL",
+            "lvCurrentDensity": 3.63,
+            "hvCurrentDensity": 3.63,
+            "corseCurrentDensity": 3.63,
+            "fineCurrentDensity": 4.24,
+            "outerCurrentDensity": 3.63,
+            "core": {
+                "coreDia": None,
+                "limbHt": None,
+            },
+            "outerWindings": {
+                "turnsPerPhase": None,
+            },
+            "cost": {
+                "copperCostPerKg": 850,
+                "aluminiumCostPerKg": 235,
+                "coreCostPerKg": 250,
+                "steelCostPerKg": 90,
+                "oilCostPerKg": 80,
+                "insulationCostPerKg": 170,
+                "radiatorCostPerKg": 200,
+            },
+            "radialGaps": {
+                "coreToLv": None,
+                "lvToHv": None,
+                "lvToCoarse": None,
+                "fineToCoarse": None,
+                "fineToOuter": None,
+            },
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["selectedCode"], "4_WDG_C")
+        self.assertEqual(response.json()["inputs"]["tapSteps"]["percentage"], 1.25)
+        self.assertEqual(response.json()["inputs"]["tapSteps"]["positive"], 4)
+        self.assertEqual(response.json()["inputs"]["tapSteps"]["negative"], 12)
+
     def test_4wdg_f_first_extra_gap_uses_hv_to_fine_pair(self):
         payload = {
             "windingSelection": "4 Wdg (LV, HV-Main, Fine and Outer)",

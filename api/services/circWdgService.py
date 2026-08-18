@@ -1037,6 +1037,11 @@ def _build_impedance_winding_data(multi_winding, lv_results, hv_results, coil_di
 
 def _build_multi_impedance(multi_winding, lv_results, hv_results, coil_dimension_scale):
     winding_data = _build_impedance_winding_data(multi_winding, lv_results, hv_results, coil_dimension_scale)
+    active_winding_data = [
+        winding
+        for winding in winding_data
+        if safe_float(winding.get("turnsPerPhase"), 0.0) > 0
+    ]
     radial_build = {
         item["name"]: item
         for item in coil_dimension_scale["radialBuild"]
@@ -1045,7 +1050,7 @@ def _build_multi_impedance(multi_winding, lv_results, hv_results, coil_dimension
     pair_breakdown = []
     total_ex = 0.0
 
-    for previous_winding, current_winding in zip(winding_data, winding_data[1:]):
+    for previous_winding, current_winding in zip(active_winding_data, active_winding_data[1:]):
         current_dimensions = radial_build.get(current_winding["name"], {})
         gap_value = safe_float(current_dimensions.get("gapFromPrevious"), 0.0)
         h_previous = h1h2(
@@ -1117,7 +1122,7 @@ def _build_multi_impedance(multi_winding, lv_results, hv_results, coil_dimension
             }
         )
 
-    total_load_loss = sum(winding["loadLoss"] for winding in winding_data)
+    total_load_loss = sum(winding["loadLoss"] for winding in active_winding_data)
     tank_loss_factor = _get_er_tank_loss_factor(multi_winding.lowVoltage, lv_results["lvCurrentPerPhase"])
     tank_loss_component = tank_loss_factor * multi_winding.kVA
     kva_base = max(multi_winding.kVA * math.pow(10, 3), 1)
@@ -1150,7 +1155,7 @@ def _build_multi_impedance(multi_winding, lv_results, hv_results, coil_dimension
         "er": total_er,
         "ek": total_ek,
         "breakdown": {
-            "activeWindingOrder": [winding["name"] for winding in winding_data],
+            "activeWindingOrder": [winding["name"] for winding in active_winding_data],
             "pairs": pair_breakdown,
             "totals": {
                 "loadLoss": two_digit_decimal(total_load_loss),

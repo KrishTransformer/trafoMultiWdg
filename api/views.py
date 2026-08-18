@@ -1,5 +1,6 @@
 import json
 
+from django.db import models
 from django.forms.models import model_to_dict
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -18,19 +19,44 @@ RADIAL_GAP_FIELDS_BY_SELECTION = {
 }
 
 
+def _coerce_model_field_value(field, value):
+    if value is None:
+        return None
+
+    if isinstance(value, str):
+        stripped_value = value.strip()
+        if stripped_value == "":
+            return None if field.null else value
+        value = stripped_value
+
+    if isinstance(field, models.FloatField):
+        try:
+            return float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid value for {field.name}: expected a number.") from exc
+
+    if isinstance(field, models.IntegerField):
+        try:
+            return int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid value for {field.name}: expected an integer.") from exc
+
+    return value
+
+
 def _build_model_instance(model_class, payload):
     if not isinstance(payload, dict):
         return None
 
-    field_names = {
-        field.name
+    fields_by_name = {
+        field.name: field
         for field in model_class._meta.fields
         if field.name != "id" and not field.is_relation
     }
     filtered_payload = {
-        key: value
+        key: _coerce_model_field_value(fields_by_name[key], value)
         for key, value in payload.items()
-        if key in field_names
+        if key in fields_by_name
     }
     return model_class(**filtered_payload)
 

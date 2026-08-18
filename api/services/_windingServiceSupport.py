@@ -406,7 +406,21 @@ def build_hv_section_results(
         safe_float(hv_source.get("hvEndClearance"), 0.0),
     )
     section_end_clearance = previous_end_clearance + 20.0 if post_hv_section else previous_end_clearance
-    if winding_type == "DISC" and allocated_turns <= 0:
+    if allocated_turns <= 0:
+        current_per_phase = safe_float(hv_source.get("hvCurrentPerPhase"), 0.0)
+        target_current_density = safe_float(current_density_override, 0.0)
+        if target_current_density <= 0:
+            target_current_density = safe_float(user_current_density, 0.0)
+        radial_parallel = max(1, int(round(safe_float(getattr(winding, "radialParallelCond", None), 1.0))))
+        axial_parallel = resolve_axial_parallel_for_winding(
+            winding_type,
+            max(1, int(round(safe_float(getattr(winding, "axialParallelCond", None), 1.0)))),
+        )
+        conductor_cross_section = (
+            get_conductor_cross_section(current_per_phase, target_current_density)
+            if target_current_density > 0 and current_per_phase > 0
+            else 0.0
+        )
         return {
             "windingName": section_name,
             "windingType": winding_type,
@@ -418,10 +432,10 @@ def build_hv_section_results(
             },
             "turnsPerPhase": 0.0,
             "voltsPerPhase": safe_float(allocated_voltage, 0.0),
-            "phaseCurrent": 0.0,
-            "currentDensity": 0.0,
-            "condCrossSec": 0.0,
-            "conductorCrossSection": 0.0,
+            "phaseCurrent": current_per_phase,
+            "currentDensity": target_current_density,
+            "condCrossSec": conductor_cross_section,
+            "conductorCrossSection": conductor_cross_section,
             "conductorInsulation": safe_float(winding.condInsulation, safe_float(hv_source.get("hvConductorInsulation"), 0.0)),
             "breadth": 0.0,
             "height": 0.0,
@@ -431,9 +445,9 @@ def build_hv_section_results(
             "noOfLayers": 0.0,
             "windingLength": 0.0,
             "endClearance": section_end_clearance,
-            "radialParallelCond": 0,
-            "axialParallelCond": 0,
-            "noOfConductors": 0,
+            "radialParallelCond": radial_parallel,
+            "axialParallelCond": axial_parallel,
+            "noOfConductors": radial_parallel * axial_parallel,
             "interLayerInsulation": 0.0,
             "ducts": 0,
             "ductSize": 0,
@@ -462,8 +476,8 @@ def build_hv_section_results(
             "halfDisc": 0,
             "partialDisc": 0,
             "balanceSpacersInLastDisc": 0,
-            "discArrangement": "",
-            "isConductorRound": False,
+            "discArrangement": "" if winding_type == "DISC" else None,
+            "isConductorRound": bool(winding.isConductorRound) if winding.isConductorRound is not None else bool(hv_source.get("hvIsConductorRound")),
             "isEnamel": bool(winding.isEnamel),
             "model": serialize_winding_inputs(winding),
         }
@@ -770,6 +784,8 @@ def build_hv_section_results(
         winding_length = next_integer((turns_per_layer + 1) * (breadth_insulated * axial_parallel))
         while winding_length > available_winding_length and turns_per_layer > 1:
             if outer_single_layer:
+                if breadth <= 0.1:
+                    break
                 breadth = one_digit_decimal(max(0.1, breadth - 0.1))
                 height = get_height(cross_sec_per_conductor, breadth)
                 breadth_insulated = get_height_insulated(breadth, conductor_insulation)
