@@ -46,6 +46,7 @@ from api.services.windingFormulae import (
     get_loss_at_50_percent,
     get_low_voltage,
     get_lv_hv_ins,
+    get_modified_limb_ht_for_impedance,
     get_nl_current_percentage,
     get_specific_loss,
     get_tank_loss,
@@ -58,6 +59,7 @@ from api.services.windingFormulae import (
 )
 
 DEFAULT_WINDING_SELECTION = "2 Wdg (LV and HV-Main)"
+IMPEDANCE_MAX_ITERATIONS = 20
 WINDING_SEQUENCE = ("lv", "hv", "corse", "fine", "outer")
 WINDING_SELECTION_CODES = {
     DEFAULT_WINDING_SELECTION: "2_WDG",
@@ -180,6 +182,64 @@ def _default_winding(multi_winding, attr_name):
         winding = Windings()
         setattr(multi_winding, attr_name, winding)
     return winding
+
+
+def _snapshot_model_fields(model):
+    """Keep request values separate from calculated values written onto the models."""
+    if model is None:
+        return None
+    if not hasattr(model, "_meta"):
+        return {
+            name: value
+            for name, value in vars(model).items()
+            if name != "_state"
+        }
+    return {
+        field.name: getattr(model, field.name)
+        for field in model._meta.fields
+        if field.name != "id"
+    }
+
+
+def _restore_model_fields(model, values):
+    if model is None or values is None:
+        return
+    for name, value in values.items():
+        setattr(model, name, value)
+
+
+def _snapshot_impedance_inputs(multi_winding):
+    active_windings = set(_get_active_windings(multi_winding.windings))
+    return {
+        "core": _snapshot_model_fields(_default_core(multi_winding)),
+        "coilDimensions": _snapshot_model_fields(_default_coil_dimensions(multi_winding)),
+        "windings": {
+            attr_name: _snapshot_model_fields(_default_winding(multi_winding, attr_name))
+            for winding_name, attr_name in WINDING_MODEL_ATTRS.items()
+            if winding_name in active_windings
+        },
+    }
+
+
+def _restore_impedance_inputs(multi_winding, snapshot):
+    _restore_model_fields(_default_core(multi_winding), snapshot["core"])
+    _restore_model_fields(_default_coil_dimensions(multi_winding), snapshot["coilDimensions"])
+    for attr_name, values in snapshot["windings"].items():
+        _restore_model_fields(_default_winding(multi_winding, attr_name), values)
+
+
+def _has_impedance_locked_input(snapshot):
+    core = snapshot["core"] or {}
+    windings = snapshot["windings"]
+    lv = windings.get("lvWindings") or {}
+    hv = windings.get("hvWindings") or {}
+    return (
+        core.get("limbHt") is not None
+        or lv.get("condBreadth") is not None
+        or lv.get("condHeight") is not None
+        or hv.get("condBreadth") is not None
+        or hv.get("condHeight") is not None
+    )
 
 
 def _default_coil_dimensions(multi_winding):
@@ -1602,8 +1662,16 @@ def _build_impedance_response(impedance_summary):
     return response
 
 
-def calculate_circ_wdg(multi_winding):
+def calculate_circ_wdg(
+    multi_winding,
+    _impedance_iteration=0,
+    _impedance_inputs=None,
+    _last_valid_limb_height=None,
+    _finalize_impedance=False,
+):
     multi_winding = _apply_defaults(multi_winding)
+    if _impedance_inputs is None:
+        _impedance_inputs = _snapshot_impedance_inputs(multi_winding)
     core = _default_core(multi_winding)
     coil_dimensions = _default_coil_dimensions(multi_winding)
     active_windings = set(_get_active_windings(multi_winding.windings))
@@ -1852,20 +1920,33 @@ def calculate_circ_wdg(multi_winding):
         "hvVoltsPerPhase",
         hv_results_for_calc["hvVoltsPerPhase"] if "hvVoltsPerPhase" in hv_results_for_calc else raw_hv_results["hvVoltsPerPhase"],
     )
-    tank_and_oil = calculate_tank_and_oil(
-        multi_winding,
-        lv_results,
-        raw_hv_results,
-        hv_results_for_calc,
-        corse_results,
-        fine_results,
-        outer_results,
-        core,
-        coil_dimensions,
-        recomputed_core_loss,
-        recomputed_tank_loss,
-        high_side_distribution,
-    )
+    try:
+        tank_and_oil = calculate_tank_and_oil(
+            multi_winding,
+            lv_results,
+            raw_hv_results,
+            hv_results_for_calc,
+            corse_results,
+            fine_results,
+            outer_results,
+            core,
+            coil_dimensions,
+            recomputed_core_loss,
+            recomputed_tank_loss,
+            high_side_distribution,
+        )
+    except ValueError as error:
+        if _last_valid_limb_height is None or "Invalid KW55 thermal state" not in str(error):
+            raise
+        _restore_impedance_inputs(multi_winding, _impedance_inputs)
+        _default_core(multi_winding).limbHt = _last_valid_limb_height
+        return calculate_circ_wdg(
+            multi_winding,
+            _impedance_iteration=_impedance_iteration,
+            _impedance_inputs=_impedance_inputs,
+            _last_valid_limb_height=None,
+            _finalize_impedance=True,
+        )
     kw55 = safe_float(tank_and_oil.get("kw55"), 0.0)
     raw_hv_results["kW55"] = kw55
     hv_results["kW55"] = kw55
@@ -1885,6 +1966,33 @@ def calculate_circ_wdg(multi_winding):
     hv_winding_response["coreLoss"] = recomputed_core_loss
     hv_winding_response["activePartSize"] = coil_dimensions.activePartSize
     common["kW55"] = kw55
+
+    ez_within_range = is_ez_within_range(
+        multi_winding.limitEz,
+        ek_value,
+        20 if multi_winding.kVA <= 10 else 5,
+    )
+    can_retry_impedance = (
+        not _finalize_impedance
+        and not ez_within_range
+        and not _has_impedance_locked_input(_impedance_inputs)
+        and _impedance_iteration + 1 < IMPEDANCE_MAX_ITERATIONS
+    )
+    if can_retry_impedance:
+        revised_limb_height = get_modified_limb_ht_for_impedance(
+            ek_value,
+            multi_winding.limitEz,
+            effective_limb_height,
+            multi_winding.kVA,
+        )
+        _restore_impedance_inputs(multi_winding, _impedance_inputs)
+        _default_core(multi_winding).limbHt = revised_limb_height
+        return calculate_circ_wdg(
+            multi_winding,
+            _impedance_iteration=_impedance_iteration + 1,
+            _impedance_inputs=_impedance_inputs,
+            _last_valid_limb_height=effective_limb_height,
+        )
 
     return {
         "selectedCode": WINDING_SELECTION_CODES[multi_winding.windings],
@@ -1960,11 +2068,8 @@ def calculate_circ_wdg(multi_winding):
             "ez": {
                 "value": ek_value,
                 "limit": multi_winding.limitEz,
-                "withinRange": is_ez_within_range(
-                    multi_winding.limitEz,
-                    ek_value,
-                    20 if multi_winding.kVA <= 10 else 5,
-                ),
+                "withinRange": ez_within_range,
+                "iterations": _impedance_iteration + 1,
             },
             "efficiencyAndVr": {
                 "efficiencyAtUnity100": get_efficiency_percentage(multi_winding.kVA, total_load_loss, recomputed_core_loss, 1.0, 1.0),

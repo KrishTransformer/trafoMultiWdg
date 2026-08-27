@@ -158,6 +158,53 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         self.assertIsNone(response.json()["results"]["coilDimensions"]["outerID"])
         self.assertIsNone(response.json()["inputs"]["coilDimensions"]["outerID"])
 
+    def test_multi_wdg_calculator_iterates_impedance_when_dimensions_are_unlocked(self):
+        payload = {
+            "windings": "LV-HV",
+            "kVA": 100,
+            "kValue": 0.45,
+            "frequency": 50,
+            "fluxDensity": 1.7,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 433,
+            "highVoltage": 11000,
+            "lvWindingType": "Layer Disc",
+            "hvWindingType": "X-Over",
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        iterations = response.json()["results"]["ez"]["iterations"]
+        self.assertGreater(iterations, 1)
+        self.assertLessEqual(iterations, 20)
+
+    def test_multi_wdg_calculator_skips_impedance_iteration_for_user_limb_height(self):
+        payload = {
+            "windings": "LV-HV",
+            "kVA": 100,
+            "kValue": 0.45,
+            "frequency": 50,
+            "fluxDensity": 1.7,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 433,
+            "highVoltage": 11000,
+            "core": {"limbHt": 900},
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["results"]["ez"]["iterations"], 1)
+
     def test_3wdg_outer_voltage_uses_actual_tap_span(self):
         payload = {
             "designId": "1234",
