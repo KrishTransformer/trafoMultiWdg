@@ -1682,6 +1682,9 @@ def calculate_circ_wdg(
     outer_winding_model = _default_winding(multi_winding, "outerWindings") if "outer" in active_windings else None
 
     lv_results = calculate_lv_windings(multi_winding)
+    # HV loss and all later passes must use the flux density implied by the final LV turns.
+    core.fluxDensity = lv_results["revisedFluxDensity"]
+    multi_winding.fluxDensity = lv_results["revisedFluxDensity"]
     raw_hv_results = calculate_hv_windings(multi_winding, lv_results)
     effective_limb_height = get_effective_limb_height(
         lv_results["windowHeight"],
@@ -2000,6 +2003,7 @@ def calculate_circ_wdg(
         "results": {
             "voltsPerTurn": multi_winding.kValue and round(multi_winding.kValue * (multi_winding.kVA ** 0.5), 3) or None,
             "revisedVoltsPerTurn": lv_results["revisedVoltsPerTurn"],
+            "revisedFluxDensity": lv_results["revisedFluxDensity"],
             "lvVoltsPerPhase": lv_results["lvVoltsPerPhase"],
             "hvVoltsPerPhase": raw_hv_results["hvVoltsPerPhase"],
             "lvTurnsPerPhase": lv_results["lvTurnsPerPhase"],

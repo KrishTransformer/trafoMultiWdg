@@ -1,5 +1,6 @@
 import json
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from django.test import Client, TestCase
 
@@ -204,6 +205,34 @@ class MultiWdgCalculatorEndpointTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["results"]["ez"]["iterations"], 1)
+
+    def test_hv_specific_loss_uses_revised_lv_flux_density(self):
+        payload = {
+            "windings": "LV-HV",
+            "kVA": 100,
+            "kValue": 0.45,
+            "frequency": 50,
+            "fluxDensity": 1.7,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 433,
+            "highVoltage": 11000,
+            "core": {"coreDia": 250, "limbHt": 900},
+        }
+
+        with patch(
+            "api.services.hvWindingService.get_specific_loss",
+            wraps=get_specific_loss,
+        ) as specific_loss:
+            response = self.client.post(
+                "/api/multiWdgCalculator/",
+                data=json.dumps(payload),
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        revised_flux_density = response.json()["results"]["revisedFluxDensity"]
+        self.assertEqual(response.json()["results"]["core"]["fluxDensity"], revised_flux_density)
+        self.assertEqual(specific_loss.call_args.args[1], revised_flux_density)
 
     def test_3wdg_outer_voltage_uses_actual_tap_span(self):
         payload = {
