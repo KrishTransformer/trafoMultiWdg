@@ -42,7 +42,7 @@ class MultiWdgCalculatorEndpointTests(TestCase):
     def test_multi_wdg_calculator_returns_formula_results(self):
         payload = {
             "designId": "D-1001",
-            "windings": "LV-HV",
+            "windings": "5_WDG",
             "kVA": 100,
             "kValue": 0.45,
             "frequency": 50,
@@ -206,6 +206,30 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["results"]["ez"]["iterations"], 1)
 
+    def test_multi_wdg_conductor_lock_skips_impedance_iteration(self):
+        payload = {
+            "windings": "LV-HV",
+            "kVA": 100,
+            "kValue": 0.45,
+            "frequency": 50,
+            "fluxDensity": 1.7,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 433,
+            "highVoltage": 11000,
+            "lockedAttributes": {
+                "hvWindings": {"conductorSizes": True},
+            },
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["results"]["ez"]["iterations"], 1)
+
     def test_hv_specific_loss_uses_revised_lv_flux_density(self):
         payload = {
             "windings": "LV-HV",
@@ -233,6 +257,76 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         revised_flux_density = response.json()["results"]["revisedFluxDensity"]
         self.assertEqual(response.json()["results"]["core"]["fluxDensity"], revised_flux_density)
         self.assertEqual(specific_loss.call_args.args[1], revised_flux_density)
+
+    def test_multi_wdg_calculator_normalizes_locked_attributes(self):
+        payload = {
+            "windings": "5_WDG",
+            "kVA": 100,
+            "kValue": 0.45,
+            "frequency": 50,
+            "fluxDensity": 1.7,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 433,
+            "highVoltage": 11000,
+            "lockedAttributes": {
+                "coreLock": {"coreDia": True},
+                "lvWindings": {"turnsPerPhase": "true"},
+                "hvWindings": {"condBreadth": True},
+                "corseWindings": {"condHeight": True},
+                "fineWindings": {"noInParallel": True},
+                "outerWindings": {"conductorSizes": True},
+            },
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        locks = response.json()["lockedAttributes"]
+        self.assertTrue(locks["coreLock"]["coreDia"])
+        self.assertFalse(locks["coreLock"]["limbHt"])
+        self.assertTrue(locks["lvWindings"]["turnsPerPhase"])
+        self.assertFalse(locks["lvWindings"]["condHeight"])
+        self.assertTrue(locks["hvWindings"]["condBreadth"])
+        self.assertTrue(locks["corseWindings"]["condHeight"])
+        self.assertTrue(locks["fineWindings"]["noInParallel"])
+        self.assertTrue(locks["outerWindings"]["conductorSizes"])
+        self.assertTrue(locks["outerWindings"]["condBreadth"])
+        self.assertTrue(locks["outerWindings"]["condHeight"])
+        self.assertEqual(response.json()["results"]["lockedAttributes"], locks)
+
+    def test_multi_wdg_core_locks_release_parallel_locks(self):
+        payload = {
+            "windings": "LV-HV",
+            "kVA": 100,
+            "kValue": 0.45,
+            "frequency": 50,
+            "fluxDensity": 1.7,
+            "vectorGroup": "Dyn11",
+            "lowVoltage": 433,
+            "highVoltage": 11000,
+            "lockedAttributes": {
+                "coreLock": {"coreDia": True, "limbHt": True},
+                "lvWindings": {"noInParallel": True},
+                "hvWindings": {"noInParallel": True},
+            },
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        locks = response.json()["lockedAttributes"]
+        self.assertTrue(locks["coreLock"]["coreDia"])
+        self.assertTrue(locks["coreLock"]["limbHt"])
+        self.assertFalse(locks["lvWindings"]["noInParallel"])
+        self.assertFalse(locks["hvWindings"]["noInParallel"])
 
     def test_3wdg_outer_voltage_uses_actual_tap_span(self):
         payload = {

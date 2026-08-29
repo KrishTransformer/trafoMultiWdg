@@ -60,6 +60,14 @@ from api.services.windingFormulae import (
 
 DEFAULT_WINDING_SELECTION = "2 Wdg (LV and HV-Main)"
 IMPEDANCE_MAX_ITERATIONS = 20
+LOCKED_CORE_FIELDS = ("coreDia", "limbHt")
+LOCKED_WINDING_FIELDS = (
+    "turnsPerPhase",
+    "conductorSizes",
+    "noInParallel",
+    "condBreadth",
+    "condHeight",
+)
 WINDING_SEQUENCE = ("lv", "hv", "corse", "fine", "outer")
 WINDING_SELECTION_CODES = {
     DEFAULT_WINDING_SELECTION: "2_WDG",
@@ -86,6 +94,7 @@ WINDING_MODEL_ATTRS = {
     "corse": "corseWindings",
     "outer": "outerWindings",
 }
+LOCKED_WINDING_GROUPS = tuple(WINDING_MODEL_ATTRS.values())
 WINDING_TYPE_ATTRS = {
     "lv": "lvWindingType",
     "hv": "hvWindingType",
@@ -184,6 +193,43 @@ def _default_winding(multi_winding, attr_name):
     return winding
 
 
+def _as_lock_flag(value):
+    return value is True or value == 1 or (isinstance(value, str) and value.strip().lower() == "true")
+
+
+def _normalize_locked_attributes(value):
+    value = value if isinstance(value, dict) else {}
+    core_lock = value.get("coreLock") if isinstance(value.get("coreLock"), dict) else {}
+    normalized = {
+        "coreLock": {field: _as_lock_flag(core_lock.get(field)) for field in LOCKED_CORE_FIELDS},
+        **{
+            winding_group: {
+                field: _as_lock_flag(
+                    value.get(winding_group, {}).get(field)
+                    if isinstance(value.get(winding_group), dict)
+                    else None
+                )
+                for field in LOCKED_WINDING_FIELDS
+            }
+            for winding_group in LOCKED_WINDING_GROUPS
+        },
+    }
+
+    for winding_group in LOCKED_WINDING_GROUPS:
+        locks = normalized[winding_group]
+        # The UI exposes conductor size as one setting, backed by breadth and height.
+        if locks["conductorSizes"]:
+            locks["condBreadth"] = True
+            locks["condHeight"] = True
+
+    # Keep the same dependency as 2Wdg: fixed core dimensions release parallel counts.
+    if normalized["coreLock"]["coreDia"] and normalized["coreLock"]["limbHt"]:
+        for winding_group in LOCKED_WINDING_GROUPS:
+            normalized[winding_group]["noInParallel"] = False
+
+    return normalized
+
+
 def _snapshot_model_fields(model):
     """Keep request values separate from calculated values written onto the models."""
     if model is None:
@@ -228,18 +274,23 @@ def _restore_impedance_inputs(multi_winding, snapshot):
         _restore_model_fields(_default_winding(multi_winding, attr_name), values)
 
 
-def _has_impedance_locked_input(snapshot):
+def _has_impedance_locked_input(snapshot, locked_attributes):
     core = snapshot["core"] or {}
     windings = snapshot["windings"]
-    lv = windings.get("lvWindings") or {}
-    hv = windings.get("hvWindings") or {}
-    return (
-        core.get("limbHt") is not None
-        or lv.get("condBreadth") is not None
-        or lv.get("condHeight") is not None
-        or hv.get("condBreadth") is not None
-        or hv.get("condHeight") is not None
-    )
+    if core.get("limbHt") is not None or locked_attributes["coreLock"]["limbHt"]:
+        return True
+
+    for winding_group, winding in windings.items():
+        locks = locked_attributes.get(winding_group, {})
+        if (
+            winding.get("condBreadth") is not None
+            or winding.get("condHeight") is not None
+            or locks.get("conductorSizes", False)
+            or locks.get("condBreadth", False)
+            or locks.get("condHeight", False)
+        ):
+            return True
+    return False
 
 
 def _default_coil_dimensions(multi_winding):
@@ -1670,6 +1721,9 @@ def calculate_circ_wdg(
     _finalize_impedance=False,
 ):
     multi_winding = _apply_defaults(multi_winding)
+    multi_winding.lockedAttributes = _normalize_locked_attributes(
+        getattr(multi_winding, "lockedAttributes", None)
+    )
     if _impedance_inputs is None:
         _impedance_inputs = _snapshot_impedance_inputs(multi_winding)
     core = _default_core(multi_winding)
@@ -1978,7 +2032,7 @@ def calculate_circ_wdg(
     can_retry_impedance = (
         not _finalize_impedance
         and not ez_within_range
-        and not _has_impedance_locked_input(_impedance_inputs)
+        and not _has_impedance_locked_input(_impedance_inputs, multi_winding.lockedAttributes)
         and _impedance_iteration + 1 < IMPEDANCE_MAX_ITERATIONS
     )
     if can_retry_impedance:
@@ -1999,6 +2053,7 @@ def calculate_circ_wdg(
 
     return {
         "selectedCode": WINDING_SELECTION_CODES[multi_winding.windings],
+        "lockedAttributes": multi_winding.lockedAttributes,
         "inputs": inputs,
         "results": {
             "voltsPerTurn": multi_winding.kValue and round(multi_winding.kValue * (multi_winding.kVA ** 0.5), 3) or None,
@@ -2023,6 +2078,7 @@ def calculate_circ_wdg(
             "fineWinding": fine_results,
             "outerWinding": outer_results,
             "windingTypes": _build_winding_type_payload(multi_winding),
+            "lockedAttributes": multi_winding.lockedAttributes,
             "kW55": kw55,
             "common": common,
             "core": {

@@ -152,6 +152,8 @@ def _build_multi_winding(payload):
         CoilDimensions,
         _normalize_coil_dimensions_payload(payload.get("coilDimensions")),
     )
+    if "lockedAttributes" in payload:
+        multi_winding.lockedAttributes = payload["lockedAttributes"]
 
     for key in [
         "dryType",
