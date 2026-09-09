@@ -427,8 +427,10 @@ def get_window_height(k_value, dia, conductor_material, given_window_height=None
 
 
 def resolve_clearance(default_value, user_value=None):
-    """Accept user clearances within +/-20% of the calculated default."""
-    if user_value is not None and 0.8 * default_value <= user_value <= 1.2 * default_value:
+    """Accept user clearances at or above 20% of the calculated default."""
+    lower_limit = 0.2 * default_value
+    tolerance = 1e-9
+    if user_value is not None and user_value >= lower_limit - tolerance:
         return user_value
     return default_value
 

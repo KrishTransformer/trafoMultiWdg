@@ -51,6 +51,12 @@ Backward-compatible aliases are still accepted in requests:
 - `fineToCoarse -> corseToFine`
 - `coarseToOuter -> corseToOuter`
 
+## Clearance Override Limits
+
+Users can edit radial gaps and winding `endClearances` at or above 20% of the calculated default value for the current design. There is no upper limit. For example, if `coreToLv` defaults to `5 mm`, the user value must be at least `1 mm`; any value from `1 mm` upward is accepted. Values below the lower limit are kept in the echoed `inputs`, but the calculator uses the default value in `results`.
+
+This applies to `coreToLv`, `lvToHv`, `hvToCorse`, `hvToFine`, `hvToOuter`, `corseToFine`, `fineToOuter`, `corseToOuter`, `coilCoilGap`/`hVHVGap`, and all winding `endClearances`.
+
 ## HV Main Winding Loss Rule
 
 The response exposes these HV-main fields:

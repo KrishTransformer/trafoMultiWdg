@@ -25,15 +25,21 @@ from api.services.impedanceVbService import calculate_vb_multi_impedance
 from api.services.numberUtils import next_5or0_integer, next_integer
 from api.services.windingFormulae import (
     displacement_volume,
+    get_core_lv_gap,
+    get_end_clearance,
+    get_hv_hv_gap,
     get_connection_weight,
+    get_lv_hv_gap,
     get_largest_blade,
     get_load_loss,
+    get_lv_end_clearance,
     get_procurement_weight,
     get_radiator_height,
     get_specific_loss,
     get_tank_height,
     get_tank_length,
     get_tank_width,
+    resolve_clearance,
     select_radiators,
 )
 
@@ -41,6 +47,36 @@ from api.services.windingFormulae import (
 def load_5500kva_three_winding_payload():
     sample = Path(__file__).resolve().parent.parent / "samples" / "5500kva_3wdg_payload.json"
     return json.loads(sample.read_text(encoding="utf-8"))
+
+
+class ClearanceLimitTests(TestCase):
+    def test_clearance_helper_accepts_values_at_or_above_twenty_percent_of_default(self):
+        self.assertEqual(resolve_clearance(10.0, 2.0), 2.0)
+        self.assertEqual(resolve_clearance(10.0, 100.0), 100.0)
+        self.assertEqual(resolve_clearance(10.0, 1.99), 10.0)
+        self.assertEqual(resolve_clearance(10.0, None), 10.0)
+
+    def test_radial_gap_overrides_have_no_upper_limit_but_reject_low_values(self):
+        self.assertEqual(get_core_lv_gap(100, 433, 0.4), 0.4)
+        self.assertEqual(get_core_lv_gap(100, 433, 0.39), 2)
+        self.assertEqual(get_core_lv_gap(100, 433, 8), 8)
+        self.assertEqual(get_lv_hv_gap(100, 11000, "Dyn11", 1.4), 1.4)
+        self.assertEqual(get_lv_hv_gap(100, 11000, "Dyn11", 1.39), 7)
+        self.assertEqual(get_lv_hv_gap(100, 11000, "Dyn11", 12), 12)
+        self.assertEqual(get_hv_hv_gap(100, 433, 11000, "Dyn11", 1.4), 1.4)
+        self.assertEqual(get_hv_hv_gap(100, 433, 11000, "Dyn11", 1.39), 7)
+        self.assertEqual(get_hv_hv_gap(100, 433, 11000, "Dyn11", 30), 30)
+
+    def test_end_clearance_overrides_have_no_upper_limit_but_reject_low_values(self):
+        self.assertEqual(get_end_clearance(100, 11000, "Dyn11", 10), 10)
+        self.assertEqual(get_end_clearance(100, 11000, "Dyn11", 9.99), 50.0)
+        self.assertEqual(get_end_clearance(100, 11000, "Dyn11", 200), 200)
+        self.assertEqual(get_lv_end_clearance(2000, "Dyn11", 6, False, 433, 11000), 6)
+        self.assertEqual(get_lv_end_clearance(2000, "Dyn11", 5.99, False, 433, 11000), 30.0)
+        self.assertEqual(get_lv_end_clearance(2000, "Dyn11", 100, False, 433, 11000), 100)
+        self.assertAlmostEqual(get_lv_end_clearance(100, "Dyn11", 3.6, True, 433, 11000), 3.6)
+        self.assertEqual(get_lv_end_clearance(100, "Dyn11", 3.59, True, 433, 11000), 18.0)
+        self.assertEqual(get_lv_end_clearance(100, "Dyn11", 60, True, 433, 11000), 60)
 
 
 class MultiWdgCalculatorEndpointTests(TestCase):
@@ -510,7 +546,7 @@ class MultiWdgCalculatorEndpointTests(TestCase):
             "radialGaps": {
                 "coreToLv": 10,
                 "lvToHv": None,
-                "hvToOuter": 10,
+                "hvToOuter": 20,
             },
         }
 
@@ -522,11 +558,11 @@ class MultiWdgCalculatorEndpointTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         outer_results = response.json()["results"]["outerWinding"]
-        self.assertEqual(response.json()["results"]["calculatedRadialGaps"]["hvToOuter"], 10.0)
-        self.assertEqual(outer_results["seedDimensions"]["gapToPrevious"], 10.0)
+        self.assertEqual(response.json()["results"]["calculatedRadialGaps"]["hvToOuter"], 20.0)
+        self.assertEqual(outer_results["seedDimensions"]["gapToPrevious"], 20.0)
         self.assertEqual(
             outer_results["innerDiameter"],
-            outer_results["seedDimensions"]["previousOuterDiameter"] + 20.0,
+            outer_results["seedDimensions"]["previousOuterDiameter"] + 40.0,
         )
 
     def test_multi_wdg_calculator_honors_user_core_dia_input(self):
@@ -601,7 +637,7 @@ class MultiWdgCalculatorEndpointTests(TestCase):
             "lowVoltage": 433,
             "highVoltage": 11000,
             "coilDimensions": {
-                "coilCoilGap": 30,
+                "coilCoilGap": 8,
             },
         }
 
@@ -612,10 +648,10 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["inputs"]["coilDimensions"]["coilCoilGap"], 30.0)
-        self.assertEqual(response.json()["inputs"]["coilDimensions"]["hVHVGap"], 30.0)
-        self.assertEqual(response.json()["results"]["coilDimensions"]["coilCoilGap"], 30)
-        self.assertEqual(response.json()["results"]["coilDimensions"]["hVHVGap"], 30)
+        self.assertEqual(response.json()["inputs"]["coilDimensions"]["coilCoilGap"], 8.0)
+        self.assertEqual(response.json()["inputs"]["coilDimensions"]["hVHVGap"], 8.0)
+        self.assertEqual(response.json()["results"]["coilDimensions"]["coilCoilGap"], 8)
+        self.assertEqual(response.json()["results"]["coilDimensions"]["hVHVGap"], 8)
 
     def test_radial_gaps_accept_legacy_lvtohv_input_but_return_lv_to_hv(self):
         payload = {
@@ -676,7 +712,7 @@ class MultiWdgCalculatorEndpointTests(TestCase):
             "outerWindingType": "Helical",
             "radialGaps": {
                 "coreToLv": 5,
-                "lvToHv": 10,
+                "lvToHv": 8,
                 "hvToOuter": 10,
             },
         }
@@ -706,7 +742,7 @@ class MultiWdgCalculatorEndpointTests(TestCase):
             "outerWindingType": "Helical",
             "radialGaps": {
                 "coreToLv": 5,
-                "lvToHv": 10,
+                "lvToHv": 8,
                 "hvToCorse": 8,
                 "corseToFine": 6,
                 "fineToOuter": 10,
@@ -1636,7 +1672,7 @@ class MultiWdgCalculatorEndpointTests(TestCase):
             "outerWindingType": "Helical",
             "radialGaps": {
                 "coreToLv": 5,
-                "lvToHv": 10,
+                "lvToHv": 8,
                 "hvToCorse": 8,
                 "corseToFine": 6,
                 "fineToOuter": 10,
@@ -1652,9 +1688,9 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         self.assertEqual(response.status_code, 200)
         results = response.json()["results"]
         hv_dims = results["coilDimensions"]["windingDimensions"]["hv"]
-        self.assertEqual(hv_dims["gapFromPrevious"], 10)
+        self.assertEqual(hv_dims["gapFromPrevious"], 8)
         normal_tap = results["impedance"]["normalTap"]
-        expected_delta = 10 + (
+        expected_delta = 8 + (
             (results["lvWinding"]["lvConductorInsulation"] + results["hvWinding"]["conductorInsulation"]) / 2
         )
         self.assertEqual(normal_tap["delta"], round(expected_delta, 2))
@@ -2004,14 +2040,14 @@ class MultiWdgCalculatorEndpointTests(TestCase):
             lvConductorMaterial="COPPER",
         )
         multi_winding.lvWindingType = "HELICAL"
-        multi_winding.lvWindings = Windings(endClearances=40, noOfLayers=2)
+        multi_winding.lvWindings = Windings(endClearances=36, noOfLayers=2)
 
         lv_results = calculate_lv_windings(multi_winding)
 
         self.assertFalse(lv_results["lvIsConductorRound"])
         self.assertEqual(lv_results["lvNumberOfLayers"], 2)
         self.assertEqual(lv_results["lvTurnsPerLayer"], 6.5)
-        self.assertEqual(lv_results["lvBreadthInsulated"], 5.7)
+        self.assertAlmostEqual(lv_results["lvBreadthInsulated"], 5.8)
         self.assertEqual(lv_results["lvRadialParallelConductors"], 7)
         self.assertEqual(lv_results["lvAxialParallelConductors"], 10)
         self.assertEqual(lv_results["lvTransposition"], 35)
@@ -2134,7 +2170,8 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         self.assertEqual(results["coilDimensions"]["outermostWinding"], "hv")
         self.assertIsNone(results["coilDimensions"]["windingDimensions"]["fine"])
 
-    def test_hv_taller_than_lv_governs_final_limb_height(self):
+    @patch("api.services.hvWindingService.get_end_clearance", return_value=20.0)
+    def test_hv_taller_than_lv_governs_final_limb_height(self, _mock_end_clearance):
         multi_winding = MultiWindings(
             kVA=10000,
             kValue=0.45,
@@ -2828,12 +2865,53 @@ class PostHvGapSelectionTests(TestCase):
             multi_winding,
             "outer",
             "hvToOuter",
-            SimpleNamespace(hvToOuter=10.0),
+            SimpleNamespace(hvToOuter=20.0),
             {"outer": {"turns": 137.0}},
             {"revisedVoltsPerTurn": 48.48},
         )
 
-        self.assertEqual(gap, 10.0)
+        self.assertEqual(gap, 20.0)
+
+    def test_resolve_post_hv_gap_rejects_values_below_twenty_percent_of_default(self):
+        multi_winding = MultiWindings(kVA=10000, vectorGroup="Dyn11")
+        multi_winding.corseWindings = Windings(turnsPerPhase=137.0)
+        multi_winding.fineWindings = Windings(turnsPerPhase=137.0)
+        multi_winding.outerWindings = Windings(turnsPerPhase=137.0)
+
+        for winding_name, gap_field in (
+            ("corse", "hvToCorse"),
+            ("fine", "hvToFine"),
+            ("outer", "hvToOuter"),
+            ("fine", "corseToFine"),
+            ("outer", "fineToOuter"),
+            ("outer", "corseToOuter"),
+        ):
+            with self.subTest(gap_field=gap_field):
+                gap = _resolve_post_hv_gap_to_previous(
+                    multi_winding,
+                    winding_name,
+                    gap_field,
+                    SimpleNamespace(**{gap_field: 3.59}),
+                    {winding_name: {"turns": 137.0}},
+                    {"revisedVoltsPerTurn": 48.48},
+                )
+
+                self.assertEqual(gap, 18.0)
+
+    def test_resolve_post_hv_gap_allows_values_above_default(self):
+        multi_winding = MultiWindings(kVA=10000, vectorGroup="Dyn11")
+        multi_winding.outerWindings = Windings(turnsPerPhase=137.0)
+
+        gap = _resolve_post_hv_gap_to_previous(
+            multi_winding,
+            "outer",
+            "hvToOuter",
+            SimpleNamespace(hvToOuter=100.0),
+            {"outer": {"turns": 137.0}},
+            {"revisedVoltsPerTurn": 48.48},
+        )
+
+        self.assertEqual(gap, 100.0)
 
 
 
