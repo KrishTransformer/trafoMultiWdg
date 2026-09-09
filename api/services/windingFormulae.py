@@ -410,7 +410,7 @@ def get_current_per_phase(kva, volts_per_phase):
 
 def get_window_height(k_value, dia, conductor_material, given_window_height=None, dry_type=False):
     if given_window_height is not None:
-        return int(math.ceil(given_window_height))
+        return given_window_height
 
     if _is_copper(conductor_material):
         window_height_factor = (0.8 / k_value) + 0.5
@@ -423,7 +423,14 @@ def get_window_height(k_value, dia, conductor_material, given_window_height=None
         else:
             window_height_factor = 1.5 / k_value
 
-    return next_integer(window_height_factor * dia)
+    return next_5or0_integer(window_height_factor * dia)
+
+
+def resolve_clearance(default_value, user_value=None):
+    """Accept user clearances within +/-20% of the calculated default."""
+    if user_value is not None and 0.8 * default_value <= user_value <= 1.2 * default_value:
+        return user_value
+    return default_value
 
 
 def get_end_clearance(kva, voltage, vector_group, end_clr=None, dry_type=False, is_lv=False):
@@ -498,17 +505,15 @@ def get_end_clearance(kva, voltage, vector_group, end_clr=None, dry_type=False, 
         elif voltage <= 33000:
             end_clearance = 2 * 240
 
-    if end_clr is not None and end_clr >= 0.25 * end_clearance:
-        return end_clr
-    return float(end_clearance)
+    return resolve_clearance(float(end_clearance), end_clr)
 
 
 def get_lv_end_clearance(kva, vector_group, end_clr, dry_type, low_voltage, high_voltage):
     voltage = high_voltage if high_voltage > 11000 and low_voltage > 1100 else low_voltage
-    end_clearance = get_end_clearance(kva, voltage, vector_group, end_clr, dry_type, True)
+    end_clearance = get_end_clearance(kva, voltage, vector_group, None, dry_type, True)
 
     if not dry_type:
-        return end_clearance
+        return resolve_clearance(end_clearance, end_clr)
 
     hilo_gap = 0
     if high_voltage <= 1100:
@@ -520,9 +525,9 @@ def get_lv_end_clearance(kva, vector_group, end_clr, dry_type, low_voltage, high
     elif high_voltage <= 33000:
         hilo_gap = 90
 
-    if high_voltage <= 1100 or end_clr is not None:
-        return end_clearance
-    return end_clearance - (2 * hilo_gap)
+    if high_voltage > 1100:
+        end_clearance -= 2 * hilo_gap
+    return resolve_clearance(end_clearance, end_clr)
 
 
 def get_perma_wood_ring(kva, voltage, dry_type):
@@ -836,9 +841,7 @@ def get_core_lv_gap(kva, voltage, core_to_lv_gap=None, dry_type=False):
         else:
             core_lv_gap = 50
 
-    if core_to_lv_gap is not None and core_to_lv_gap >= 0.65 * core_lv_gap:
-        return core_to_lv_gap
-    return core_lv_gap
+    return resolve_clearance(core_lv_gap, core_to_lv_gap)
 
 
 def get_id(inner_dia, gap):
@@ -878,9 +881,7 @@ def get_lv_hv_gap(kva, high_voltage, vector_group, lv_to_hv_gap=None, dry_type=F
         elif high_voltage <= 33000:
             lv_hv_gap = 90
 
-    if lv_to_hv_gap is not None and lv_to_hv_gap >= 0.5 * lv_hv_gap:
-        return lv_to_hv_gap
-    return lv_hv_gap
+    return resolve_clearance(lv_hv_gap, lv_to_hv_gap)
 
 
 def get_lmt(lv_id, lv_od):
@@ -1155,9 +1156,7 @@ def get_hv_hv_gap(kva, lv_voltage, hv_voltage, vector_group, hv_to_hv_gap=None, 
         else:
             hv_hv_gap = 7
 
-    if hv_to_hv_gap is not None and hv_to_hv_gap >= 0.65 * hv_hv_gap:
-        return hv_to_hv_gap
-    return hv_hv_gap
+    return resolve_clearance(hv_hv_gap, hv_to_hv_gap)
 
 
 def get_center_distance(hv_od, hv_hv_gap):

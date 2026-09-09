@@ -3,6 +3,7 @@ import math
 from api.models import Windings
 from api.services._windingServiceSupport import build_disc_arrangement, resolve_axial_parallel_for_winding
 from api.services.numberUtils import (
+    next_5or0_integer,
     next_integer,
     one_digit_decimal,
     one_digit_decimal_floor,
@@ -1218,13 +1219,14 @@ def calculate_lv_windings(multi_winding):
         is_round = user_round if user_round is not None else is_conductor_round(cross_sec_per_conductor)
         values = _calculate_helical_round(ctx, winding) if is_round else _calculate_helical_rectangular(ctx, winding)
 
-    rounded_window_height = values["lvWindingLength"] + values["lvEndClearance"] + ctx["permaWoodRing"] + values["lvTransposition"]
-    if rounded_window_height % 5 != 0:
-        window_height_round_off = 5 - (rounded_window_height % 5)
-        ctx["windowHeight"] = rounded_window_height + window_height_round_off
-        values["lvEndClearance"] += window_height_round_off
-    else:
-        ctx["windowHeight"] = rounded_window_height
+    required_window_height = values["lvWindingLength"] + values["lvEndClearance"] + ctx["permaWoodRing"] + values["lvTransposition"]
+    given_window_height = getattr(getattr(multi_winding, "core", None), "limbHt", None)
+    ctx["windowHeight"] = (
+        given_window_height
+        if given_window_height is not None
+        else next_5or0_integer(required_window_height)
+    )
+    values["lvEndClearance"] += ctx["windowHeight"] - required_window_height
 
     values.setdefault("lvUnpressedWindingLength", 0)
     return _finalize_result(ctx, values)

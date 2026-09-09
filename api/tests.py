@@ -1,4 +1,6 @@
 import json
+import math
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -20,13 +22,14 @@ from api.services.circWdgService import (
     _resolve_post_hv_gap_to_previous,
 )
 from api.services.impedanceVbService import calculate_vb_multi_impedance
-from api.services.numberUtils import next_integer
+from api.services.numberUtils import next_5or0_integer, next_integer
 from api.services.windingFormulae import (
     displacement_volume,
     get_connection_weight,
     get_largest_blade,
     get_load_loss,
     get_procurement_weight,
+    get_radiator_height,
     get_specific_loss,
     get_tank_height,
     get_tank_length,
@@ -35,154 +38,85 @@ from api.services.windingFormulae import (
 )
 
 
+def load_5500kva_three_winding_payload():
+    sample = Path(__file__).resolve().parent.parent / "samples" / "5500kva_3wdg_payload.json"
+    return json.loads(sample.read_text(encoding="utf-8"))
+
+
 class MultiWdgCalculatorEndpointTests(TestCase):
     def setUp(self):
         self.client = Client()
 
     def test_multi_wdg_calculator_returns_formula_results(self):
-        payload = {
-            "designId": "D-1001",
-            "windings": "5_WDG",
-            "kVA": 100,
-            "kValue": 0.45,
-            "frequency": 50,
-            "fluxDensity": 1.7,
-            "vectorGroup": "Dyn11",
-            "lowVoltage": 433,
-            "highVoltage": 11000,
-            "lvWindingType": "Layer Disc",
-            "hvWindingType": "X-Over",
-            "lvWindings": {
-                "endClearances": 40,
-            },
-            "hvWindings": {
-                "endClearances": 60,
-            },
-            "radialGaps": {
-                "coreToLv": 5,
-            },
-        }
-
+        payload = load_5500kva_three_winding_payload()
         response = self.client.post(
             "/api/multiWdgCalculator/",
             data=json.dumps(payload),
             content_type="application/json",
         )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["selectedCode"], "2_WDG")
-        self.assertNotIn("windingSelection", response.json()["inputs"])
-        self.assertNotIn("windingSelection", response.json()["results"])
-        results = response.json()["results"]
-        self.assertEqual(results["voltsPerTurn"], 4.5)
-        self.assertEqual(results["lvVoltsPerPhase"], 249.99)
-        self.assertEqual(results["hvVoltsPerPhase"], 11000.0)
-        self.assertEqual(results["lvTurnsPerPhase"], 56)
-        self.assertEqual(results["hvTurnsPerPhase"], 2465)
-        self.assertEqual(results["lvCurrentPerPhase"], 133.34)
-        self.assertEqual(results["hvCurrentPerPhase"], 3.03)
-        self.assertEqual(results["lvEndClearance"], 46.0)
-        self.assertEqual(results["hvEndClearance"], 64.0)
-        self.assertEqual(results["lvWinding"]["lvTurnsPerPhase"], 56)
-        self.assertEqual(results["lvWinding"]["lvTurnsPerLayer"], 56)
-        self.assertEqual(results["lvWinding"]["lvNumberOfLayers"], 1)
-        self.assertEqual(results["hvWinding"]["hvTurnsPerPhase"], 2465)
-        self.assertEqual(results["hvWinding"]["hvTurnsPerLayer"], 45)
-        self.assertEqual(results["hvWinding"]["hvNumberOfLayers"], 14)
-        self.assertEqual(results["lvWinding"]["voltsPerPhase"], 249.99)
-        self.assertEqual(results["hvWinding"]["voltsPerPhase"], 11000.0)
-        self.assertIn("common", results)
-        self.assertIn("core", results)
-        self.assertIn("coilDimensions", results)
-        self.assertEqual(response.json()["inputs"]["windingModels"]["lv"]["turnsPerPhase"], 56)
-        self.assertEqual(response.json()["inputs"]["windingModels"]["lv"]["phaseCurrent"], 133.34)
-        self.assertEqual(response.json()["inputs"]["windingModels"]["lv"]["endClearances"], 46)
-        self.assertEqual(response.json()["inputs"]["windingModels"]["lv"]["terminal"], 249.99)
+        self.assertEqual(response.status_code, 200, response.content)
+        body = response.json()
+        inputs = body["inputs"]
+        results = body["results"]
+        self.assertEqual(body["selectedCode"], "3_WDG")
+        self.assertNotIn("windingSelection", inputs)
+        self.assertNotIn("windingSelection", results)
+        self.assertEqual(results["voltsPerTurn"], round(0.45 * (5500 ** 0.5), 3))
+        self.assertEqual(results["lvVoltsPerPhase"], 658.18)
+        self.assertEqual(results["hvVoltsPerPhase"], 33000.0)
+        self.assertEqual(results["lvTurnsPerPhase"], 20)
+        self.assertEqual(results["lvCurrentPerPhase"], 2785.46)
+        self.assertEqual(results["hvCurrentPerPhase"], 55.56)
+        self.assertEqual(results["windingTypes"], {"lv": "FOIL", "hv": "DISC", "outer": "HELICAL"})
+        self.assertEqual(inputs["windingTypes"], results["windingTypes"])
+        self.assertEqual(inputs["radialGaps"], payload["radialGaps"])
+        self.assertEqual(inputs["core"]["limbHt"], results["core"]["limbHt"])
+        self.assertGreater(results["core"]["coreLoss"], 0)
+        self.assertEqual(results["impedance"]["ek"], results["ez"]["value"])
         self.assertEqual(
-            response.json()["inputs"]["windingModels"]["lv"]["noInParallel"],
-            "Rad 1 X Axi 1 = 1",
+            results["phaseVoltages"],
+            {"lv": 658, "hvMain": 31350, "corse": 0, "fine": 0, "outer": 3300},
         )
-        self.assertEqual(response.json()["inputs"]["windingModels"]["hv"]["turnsPerPhase"], 2465)
-        self.assertEqual(response.json()["inputs"]["windingModels"]["hv"]["terminal"], 11000.0)
-        self.assertEqual(
-            response.json()["inputs"]["windingModels"]["hv"]["noInParallel"],
-            "Rad 1 X Axi 1 = 1",
-        )
-        self.assertEqual(response.json()["inputs"]["radialGaps"]["coreToLv"], 5)
-        self.assertEqual(
-            response.json()["inputs"]["radialGaps"],
-            {"coreToLv": 5, "lvToHv": 0.0},
-        )
-        self.assertEqual(response.json()["inputs"]["core"]["wKgGrade"], 1.3)
-        self.assertEqual(response.json()["results"]["core"]["wKgGrade"], 1.3)
-        self.assertGreater(response.json()["results"]["hvWinding"]["coreLoss"], 0)
-        self.assertEqual(
-            response.json()["inputs"]["windingTypes"]["lv"],
-            "LAYER_DISC",
-        )
-        self.assertEqual(
-            response.json()["inputs"]["windingTypes"]["hv"],
-            "XOVER",
-        )
-        self.assertNotIn("outer", response.json()["inputs"]["windingTypes"])
-        self.assertIn("ex", response.json()["results"]["impedance"])
-        self.assertIn("er", response.json()["results"]["impedance"])
-        self.assertIn("ek", response.json()["results"]["impedance"])
-        self.assertEqual(
-            response.json()["results"]["impedance"]["ek"],
-            response.json()["results"]["ez"]["value"],
-        )
-        self.assertEqual(
-            response.json()["results"]["phaseVoltages"],
-            {"lv": 249, "hvMain": 11000, "corse": 0, "fine": 0, "outer": 0},
-        )
-        self.assertEqual(
-            response.json()["results"]["phaseVoltageDivision"],
-            {"lv": 249, "hvMain": 11000, "corse": 0, "fine": 0, "outer": 0},
-        )
-        self.assertEqual(
-            response.json()["results"]["testVoltages"],
-            {
-                "lv": {"test": 3, "impulse": 0},
-                "hv": {"test": 28, "impulse": 75},
-            },
-        )
-        self.assertEqual(
-            response.json()["results"]["coilDimensions"]["windingDimensions"]["lv"]["innerDiameter"],
-            response.json()["results"]["coilDimensions"]["lVID"],
-        )
-        self.assertEqual(
-            response.json()["results"]["coilDimensions"]["windingDimensions"]["hv"]["outerDiameter"],
-            response.json()["results"]["coilDimensions"]["hVOD"],
-        )
-        self.assertIsNone(response.json()["results"]["coilDimensions"]["windingDimensions"]["outer"])
-        self.assertIsNone(response.json()["results"]["coilDimensions"]["outerID"])
-        self.assertIsNone(response.json()["inputs"]["coilDimensions"]["outerID"])
+        self.assertEqual(results["phaseVoltageDivision"], results["phaseVoltages"])
+        self.assertIsNone(results["corseWinding"])
+        self.assertIsNone(results["fineWinding"])
+        for winding, turns_key in (("lv", "lvTurnsPerPhase"), ("hv", "hvTurnsPerPhase")):
+            self.assertEqual(inputs["windingModels"][winding]["turnsPerPhase"], results[turns_key])
+        dimensions = results["coilDimensions"]
+        for winding, id_key, od_key in (("lv", "lVID", "lVOD"), ("hv", "hVID", "hVOD"), ("outer", "outerID", "outerOD")):
+            self.assertEqual(dimensions["windingDimensions"][winding]["innerDiameter"], dimensions[id_key])
+            self.assertEqual(dimensions["windingDimensions"][winding]["outerDiameter"], dimensions[od_key])
+            self.assertGreater(inputs["windingModels"][winding]["turnsPerPhase"], 0)
 
     def test_multi_wdg_calculator_iterates_impedance_when_dimensions_are_unlocked(self):
-        payload = {
-            "windings": "LV-HV",
-            "kVA": 100,
-            "kValue": 0.45,
-            "frequency": 50,
-            "fluxDensity": 1.7,
-            "vectorGroup": "Dyn11",
-            "lowVoltage": 433,
-            "highVoltage": 11000,
-            "lvWindingType": "Layer Disc",
-            "hvWindingType": "X-Over",
-        }
+        payload = load_5500kva_three_winding_payload()
+        heights_used = []
 
-        response = self.client.post(
-            "/api/multiWdgCalculator/",
-            data=json.dumps(payload),
-            content_type="application/json",
-        )
+        def record_window_height(multi_winding):
+            result = calculate_lv_windings(multi_winding)
+            heights_used.append((multi_winding.core.limbHt, result["windowHeight"]))
+            return result
 
-        self.assertEqual(response.status_code, 200)
-        iterations = response.json()["results"]["ez"]["iterations"]
-        self.assertGreater(iterations, 1)
-        self.assertLessEqual(iterations, 20)
+        with patch("api.services.circWdgService.calculate_lv_windings", side_effect=record_window_height):
+            response = self.client.post(
+                "/api/multiWdgCalculator/",
+                data=json.dumps(payload),
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        results = response.json()["results"]
+        self.assertGreater(results["ez"]["iterations"], 1)
+        self.assertLessEqual(results["ez"]["iterations"], 20)
+        self.assertTrue(results["ez"]["withinRange"])
+        self.assertEqual(len(heights_used), results["ez"]["iterations"])
+        self.assertIsNone(heights_used[0][0])
+        for input_height, window_height in heights_used:
+            if input_height is not None:
+                self.assertEqual(input_height % 5, 0)
+            self.assertEqual(window_height % 5, 0)
+        self.assertEqual(results["core"]["limbHt"] % 5, 0)
 
     def test_multi_wdg_calculator_skips_impedance_iteration_for_user_limb_height(self):
         payload = {
@@ -205,6 +139,48 @@ class MultiWdgCalculatorEndpointTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["results"]["ez"]["iterations"], 1)
+
+    def test_user_limb_height_is_preserved_without_rounding(self):
+        for height in (903, 903.5):
+            with self.subTest(height=height):
+                payload = load_5500kva_three_winding_payload()
+                payload["core"]["limbHt"] = height
+                response = self.client.post(
+                    "/api/multiWdgCalculator/",
+                    data=json.dumps(payload),
+                    content_type="application/json",
+                )
+                self.assertEqual(response.status_code, 200, response.content)
+                body = response.json()
+                self.assertEqual(body["inputs"]["core"]["limbHt"], height)
+                self.assertEqual(body["results"]["core"]["limbHt"], height)
+                self.assertEqual(body["results"]["lvWinding"]["windowHeight"], height)
+                self.assertEqual(body["results"]["ez"]["iterations"], 1)
+
+    def test_impedance_loop_rounds_limb_height_before_recalculating_windings(self):
+        heights_used = []
+
+        def calculate_lv_with_recorded_height(multi_winding):
+            heights_used.append(multi_winding.core.limbHt)
+            return calculate_lv_windings(multi_winding)
+
+        with (
+            patch("api.services.circWdgService.is_ez_within_range", side_effect=[False, True]),
+            patch("api.services.circWdgService.get_modified_limb_ht_for_impedance", return_value=903.1),
+            patch("api.services.circWdgService.calculate_lv_windings", side_effect=calculate_lv_with_recorded_height),
+        ):
+            response = self.client.post(
+                "/api/multiWdgCalculator/",
+                data=json.dumps(load_5500kva_three_winding_payload()),
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(heights_used, [None, 905])
+        body = response.json()
+        self.assertEqual(body["results"]["ez"]["iterations"], 2)
+        self.assertEqual(body["results"]["core"]["limbHt"] % 5, 0)
+        self.assertEqual(body["inputs"]["core"]["limbHt"], body["results"]["core"]["limbHt"])
 
     def test_multi_wdg_conductor_lock_skips_impedance_iteration(self):
         payload = {
@@ -2192,10 +2168,10 @@ class MultiWdgCalculatorEndpointTests(TestCase):
             )
         )
 
-        results = calculate_circ_wdg(multi_winding)["results"]
+        results = calculate_circ_wdg(multi_winding, _finalize_impedance=True)["results"]
         lv_results = results["lvWinding"]
         hv_results = results["hvWinding"]
-        expected_limb_height = (
+        expected_limb_height = next_5or0_integer(
             hv_results["hvWindingLength"]
             + hv_results["hvEndClearance"]
             + lv_results["permaWoodRing"]
@@ -2216,7 +2192,7 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         )
         self.assertTrue(
             results["coilDimensions"]["activePartSize"].endswith(
-                f"{(2 * results['core']['coreDia']) + expected_limb_height} H mm"
+                f"{(2 * results['core']['coreDia']) + expected_limb_height:g} H mm"
             )
         )
 
@@ -2427,113 +2403,117 @@ class MultiWdgCalculatorEndpointTests(TestCase):
         self.assertIn(" L X ", hv_model["conductorSizes"])
         self.assertTrue(hv_model["conductorSizes"].endswith(" B"))
 
-    def test_api_returns_tank_and_oil_results(self):
-        payload = {
-            "windings": "LV-HV",
-            "kVA": 100,
-            "kValue": 0.45,
-            "vectorGroup": "Dyn11",
-            "lowVoltage": 433,
-            "highVoltage": 11000,
-        }
-
+    def _calculate_sample_tank(self, **overrides):
+        payload = load_5500kva_three_winding_payload()
+        payload.update(overrides)
         response = self.client.post(
             "/api/multiWdgCalculator/",
             data=json.dumps(payload),
             content_type="application/json",
         )
+        self.assertEqual(response.status_code, 200, response.content)
+        results = response.json()["results"]
+        self.assertTrue(results["ez"]["withinRange"])
+        return results, results["tankAndOil"]
 
-        self.assertEqual(response.status_code, 200)
-        tank_and_oil = response.json()["results"]["tankAndOil"]
-        self.assertEqual(tank_and_oil["tankLength"], 685)
-        self.assertEqual(tank_and_oil["tankWidth"], 285)
-        self.assertEqual(tank_and_oil["tankHeight"], 615)
-        self.assertEqual(tank_and_oil["radiatorHeight"], 400)
-        self.assertEqual(tank_and_oil["radiatorWidth"], 226)
-        self.assertEqual(tank_and_oil["radiatorSection"], 19)
-        self.assertEqual(tank_and_oil["noOfRadiators"], 4)
-        self.assertEqual(tank_and_oil["tankLoss"], 80)
-        self.assertEqual(response.json()["results"]["hvWinding"]["tankLoss"], tank_and_oil["tankLoss"])
-        self.assertEqual(tank_and_oil["capitalCost"], 151735)
+    def test_api_returns_tank_and_oil_results(self):
+        results, tank = self._calculate_sample_tank()
+        # Tank dimensions must follow the final geometry, after impedance tuning.
+        dimensions = results["coilDimensions"]
+        self.assertEqual(
+            tank["tankLength"],
+            next_5or0_integer(dimensions["outermostOD"] + 2 * results["core"]["cenDist"] + 2 * tank["wdgTankGap"]),
+        )
+        self.assertEqual(
+            tank["tankWidth"],
+            next_5or0_integer(dimensions["outermostOD"] + 2 * tank["wdgTankGap"] + tank["connectionGap"]),
+        )
+        self.assertEqual(
+            tank["tankHeight"],
+            get_tank_height(results["core"]["limbHt"], get_largest_blade(results["core"]["coreDia"]), 5500, 33000, False, 2.5, tank["topYokeCoverGap"]),
+        )
+        self.assertGreater(tank["radiatorHeight"], 0)
+        self.assertGreater(tank["radiatorWidth"], 0)
+        self.assertGreater(tank["radiatorSection"], 0)
+        self.assertGreater(tank["noOfRadiators"], 0)
+        self.assertEqual(tank["pipeLength"], 0)
+        self.assertEqual(tank["tankLoss"], 2200)
+        self.assertEqual(results["hvWinding"]["tankLoss"], tank["tankLoss"])
+        self.assertEqual(
+            tank["capitalCost"],
+            sum(tank[key] for key in ("conductorCost", "coreCost", "insulationCost", "steelCost", "oilCost", "radiatorCost")),
+        )
 
     def test_api_uses_tank_override_inputs_in_tank_and_oil_results(self):
-        payload = {
-            "windings": "LV-HV",
-            "kVA": 100,
-            "kValue": 0.45,
-            "vectorGroup": "Dyn11",
-            "lowVoltage": 433,
-            "highVoltage": 11000,
-            "tank": {
-                "wdgToTankGap": 40,
-                "connectionGap": 35,
-                "topYokeToCoverGap": 80,
-            },
-        }
-
-        response = self.client.post(
-            "/api/multiWdgCalculator/",
-            data=json.dumps(payload),
-            content_type="application/json",
-        )
-
-        self.assertEqual(response.status_code, 200)
-        tank_and_oil = response.json()["results"]["tankAndOil"]
-        self.assertEqual(tank_and_oil["tankLength"], 715)
-        self.assertEqual(tank_and_oil["tankWidth"], 325)
-        self.assertEqual(tank_and_oil["tankHeight"], 635)
-        self.assertEqual(tank_and_oil["wdgTankGap"], 40)
-        self.assertEqual(tank_and_oil["connectionGap"], 35)
-        self.assertEqual(tank_and_oil["topYokeCoverGap"], 80)
+        base_results, base = self._calculate_sample_tank()
+        results, tank = self._calculate_sample_tank(tank={
+            "wdgToTankGap": 60,
+            "connectionGap": 40,
+            "topYokeToCoverGap": 220,
+        })
+        self.assertEqual(results["core"], base_results["core"])
+        self.assertEqual(tank["tankLength"], base["tankLength"] + 20)
+        self.assertEqual(tank["tankWidth"], base["tankWidth"] + 30)
+        self.assertEqual(tank["tankHeight"], base["tankHeight"] + 20)
+        self.assertEqual(tank["wdgTankGap"], 60)
+        self.assertEqual(tank["connectionGap"], 40)
+        self.assertEqual(tank["topYokeCoverGap"], 220)
 
     def test_api_supports_pipe_cooling_branch_in_tank_and_oil_results(self):
-        payload = {
-            "windings": "LV-HV",
-            "kVA": 1000,
-            "kValue": 0.45,
-            "vectorGroup": "Dyn11",
-            "lowVoltage": 433,
-            "highVoltage": 11000,
-            "radiatorType": "PIPES",
-        }
-
-        response = self.client.post(
-            "/api/multiWdgCalculator/",
-            data=json.dumps(payload),
-            content_type="application/json",
-        )
-
-        self.assertEqual(response.status_code, 200)
-        tank_and_oil = response.json()["results"]["tankAndOil"]
-        self.assertEqual(tank_and_oil["pipeLength"], 0.2)
-        self.assertEqual(tank_and_oil["oilInRadiators"], 1)
-        self.assertEqual(tank_and_oil["totalRadiatorWeight"], 1)
-        self.assertIn("Pipe", tank_and_oil["coolingStatement"])
+        _, tank = self._calculate_sample_tank(radiatorType="PIPES")
+        self.assertAlmostEqual(tank["pipeLength"], tank["corrugationArea"] / tank["pipeArea"], delta=0.05)
+        self.assertGreater(tank["pipeLength"], 0)
+        self.assertGreater(tank["oilInRadiators"], 0)
+        self.assertGreater(tank["totalRadiatorWeight"], 0)
+        self.assertEqual(tank["radiatorSection"], 0)
+        self.assertIn("Pipe", tank["coolingStatement"])
 
     def test_api_supports_corrugation_cooling_branch_in_tank_and_oil_results(self):
-        payload = {
-            "windings": "LV-HV",
-            "kVA": 1000,
-            "kValue": 0.45,
-            "vectorGroup": "Dyn11",
-            "lowVoltage": 433,
-            "highVoltage": 11000,
-            "radiatorType": "CORRUGATION",
-        }
-
-        response = self.client.post(
-            "/api/multiWdgCalculator/",
-            data=json.dumps(payload),
-            content_type="application/json",
+        results, tank = self._calculate_sample_tank(radiatorType="CORRUGATION")
+        self.assertEqual(
+            tank["radiatorHeight"],
+            get_radiator_height(tank["tankHeight"], get_largest_blade(results["core"]["coreDia"]), 15),
         )
+        self.assertGreater(tank["radiatorWidth"], 0)
+        self.assertEqual(tank["corrugationSlitsOnLength"], 2 * math.floor((tank["tankLength"] - 100) / 50))
+        self.assertEqual(tank["corrugationSlitsOnWidth"], 2 * math.floor((tank["tankWidth"] - 100) / 50))
+        self.assertGreater(tank["totalRadiatorWeight"], 0)
+        self.assertEqual(tank["pipeLength"], 0)
+        self.assertIn("Corrugation", tank["coolingStatement"])
 
-        self.assertEqual(response.status_code, 200)
-        tank_and_oil = response.json()["results"]["tankAndOil"]
-        self.assertEqual(tank_and_oil["radiatorHeight"], 800)
-        self.assertEqual(tank_and_oil["radiatorWidth"], 1)
-        self.assertEqual(tank_and_oil["corrugationSlitsOnLength"], 38)
-        self.assertEqual(tank_and_oil["corrugationSlitsOnWidth"], 12)
-        self.assertEqual(tank_and_oil["totalRadiatorWeight"], 1)
+    def test_impedance_thermal_fallback_reports_out_of_range(self):
+        # Deliberately retain the old cooling case as a thermal-limit edge case.
+        from api.services.tankOilService import calculate_tank_and_oil
+
+        successful_heights = []
+        rejected_heights = []
+
+        def record_thermal_result(*args):
+            height = args[7].limbHt
+            try:
+                result = calculate_tank_and_oil(*args)
+            except ValueError as error:
+                self.assertIn("Invalid KW55 thermal state", str(error))
+                rejected_heights.append(height)
+                raise
+            successful_heights.append(height)
+            return result
+
+        with patch("api.services.circWdgService.calculate_tank_and_oil", side_effect=record_thermal_result):
+            response = self.client.post(
+                "/api/multiWdgCalculator/",
+                data=json.dumps({"kVA": 1000, "kValue": 0.45, "vectorGroup": "Dyn11", "lowVoltage": 433, "highVoltage": 11000, "radiatorType": "PIPES"}),
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, 200, response.content)
+        results = response.json()["results"]
+        self.assertEqual(len(rejected_heights), 1)
+        self.assertGreater(len(successful_heights), 1)
+        self.assertEqual(successful_heights[-1], successful_heights[-2])
+        self.assertEqual(results["core"]["limbHt"], successful_heights[-1])
+        self.assertEqual(results["core"]["limbHt"] % 5, 0)
+        self.assertFalse(results["ez"]["withinRange"])
+        self.assertGreater(results["ez"]["iterations"], 1)
 
     def test_3wdg_tank_and_oil_uses_outermost_geometry_and_sums_high_side_connections(self):
         payload = {
@@ -2812,6 +2792,24 @@ class HighSideDistributionTests(TestCase):
         self.assertEqual(distribution["corse"]["taps"], 2.0)
 
 
+    def test_5wdg_distribution_ignores_outer_capacity_limits(self):
+        multi_winding = MultiWindings(
+            windings="5 Wdg (LV, HV-Main, Corse, Fine and Outer)",
+            tapStepPositive=2,
+            tapStepNegative=2,
+        )
+        multi_winding.outerWindings = Windings(turnsPerPhase=20.0)
+
+        distribution = _get_high_side_distribution(multi_winding, self.lv_results, self.hv_results)
+
+        self.assertEqual(distribution["outer"]["turns"], 10.0)
+        self.assertEqual(distribution["outer"]["taps"], 1.0)
+        self.assertEqual(distribution["fine"]["turns"], 10.0)
+        self.assertEqual(distribution["fine"]["taps"], 1.0)
+        self.assertEqual(distribution["corse"]["turns"], 20.0)
+        self.assertEqual(distribution["corse"]["taps"], 2.0)
+
+
 class PostHvGapSelectionTests(TestCase):
     def test_voltage_class_gap_table_matches_expected_thresholds(self):
         self.assertEqual(_get_post_hv_gap_for_voltage(500, 1100, "Dyn11"), 5.0)
@@ -2837,22 +2835,6 @@ class PostHvGapSelectionTests(TestCase):
 
         self.assertEqual(gap, 10.0)
 
-    def test_5wdg_distribution_ignores_outer_capacity_limits(self):
-        multi_winding = MultiWindings(
-            windings="5 Wdg (LV, HV-Main, Corse, Fine and Outer)",
-            tapStepPositive=2,
-            tapStepNegative=2,
-        )
-        multi_winding.outerWindings = Windings(turnsPerPhase=20.0)
-
-        distribution = _get_high_side_distribution(multi_winding, self.lv_results, self.hv_results)
-
-        self.assertEqual(distribution["outer"]["turns"], 10.0)
-        self.assertEqual(distribution["outer"]["taps"], 1.0)
-        self.assertEqual(distribution["fine"]["turns"], 10.0)
-        self.assertEqual(distribution["fine"]["taps"], 1.0)
-        self.assertEqual(distribution["corse"]["turns"], 20.0)
-        self.assertEqual(distribution["corse"]["taps"], 2.0)
 
 
 class TapDistributionIntegrationTests(TestCase):

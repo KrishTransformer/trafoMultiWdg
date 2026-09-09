@@ -1,7 +1,7 @@
 import math
 
 from api.models import CoilDimensions, Core, Windings
-from api.services.numberUtils import next_integer, two_digit_decimal
+from api.services.numberUtils import next_5or0_integer, next_integer, two_digit_decimal
 from api.services._windingServiceSupport import (
     build_geometry_snapshot,
     build_hv_section_results,
@@ -56,6 +56,7 @@ from api.services.windingFormulae import (
     h1h2,
     is_ez_within_range,
     ls,
+    resolve_clearance,
 )
 
 DEFAULT_WINDING_SELECTION = "2 Wdg (LV and HV-Main)"
@@ -425,22 +426,20 @@ def _resolve_post_hv_gap_to_previous(multi_winding, winding_name, gap_field, rad
         getattr(radial_gaps, gap_field, 0.0) if radial_gaps is not None else 0.0,
         0.0,
     )
-    if explicit_gap > 0:
-        return explicit_gap
-
     allocated_turns = safe_float((section_allocations.get(winding_name) or {}).get("turns"), 0.0)
     if allocated_turns <= 0:
         winding = getattr(multi_winding, WINDING_MODEL_ATTRS[winding_name], None)
         allocated_turns = safe_float(getattr(winding, "turnsPerPhase", None), 0.0) if winding is not None else 0.0
     if allocated_turns <= 0:
-        return explicit_gap
+        return 0.0
 
     section_voltage = safe_float(lv_results.get("revisedVoltsPerTurn"), 0.0) * allocated_turns * 2
-    return _get_post_hv_gap_for_voltage(
+    default_gap = _get_post_hv_gap_for_voltage(
         getattr(multi_winding, "kVA", 0.0),
         section_voltage,
         getattr(multi_winding, "vectorGroup", ""),
     )
+    return resolve_clearance(default_gap, explicit_gap)
 
 
 def _build_finalized_hv_source(raw_hv_results, hv_section_results):
@@ -1746,6 +1745,13 @@ def calculate_circ_wdg(
         raw_hv_results["hvEndClearance"],
         lv_results["permaWoodRing"],
     )
+    # The original snapshot distinguishes user input from impedance-loop heights.
+    given_limb_height = (_impedance_inputs["core"] or {}).get("limbHt")
+    effective_limb_height = (
+        given_limb_height
+        if given_limb_height is not None
+        else next_5or0_integer(effective_limb_height)
+    )
     high_side_distribution = _get_high_side_distribution(multi_winding, lv_results, raw_hv_results)
     hv_results = _build_hv_main_results(
         multi_winding,
@@ -2043,7 +2049,7 @@ def calculate_circ_wdg(
             multi_winding.kVA,
         )
         _restore_impedance_inputs(multi_winding, _impedance_inputs)
-        _default_core(multi_winding).limbHt = revised_limb_height
+        _default_core(multi_winding).limbHt = next_5or0_integer(revised_limb_height)
         return calculate_circ_wdg(
             multi_winding,
             _impedance_iteration=_impedance_iteration + 1,

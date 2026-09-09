@@ -1,0 +1,41 @@
+{
+  "designId": null,
+  "windingSelection": "3 Wdg (LV, HV-Main and Outer)",
+  "kVA": 5500,
+  "kValue": 0.45,
+  "fluxDensity": 1.6888,
+  "vectorGroup": "Dyn11",
+  "lowVoltage": 1140,
+  "highVoltage": 33000,
+  "tapStepsPercentage": 2.5,
+  "tapStepPositive": 2,
+  "tapStepNegative": 2,
+  "lvWindings": {"isEnamel": false},
+  "hvWindings": {"isEnamel": false},
+  "core": {"coreDia": null, "limbHt": null},
+  "lockedAttributes": {
+    "coreLock": {"coreDia": false, "limbHt": false},
+    "lvWindings": {"turnsPerPhase": false, "conductorSizes": false, "noInParallel": false, "condBreadth": false, "condHeight": false},
+    "hvWindings": {"turnsPerPhase": false, "conductorSizes": false, "noInParallel": false, "condBreadth": false, "condHeight": false},
+    "corseWindings": {"turnsPerPhase": false, "conductorSizes": false, "noInParallel": false, "condBreadth": false, "condHeight": false},
+    "fineWindings": {"turnsPerPhase": false, "conductorSizes": false, "noInParallel": false, "condBreadth": false, "condHeight": false},
+    "outerWindings": {"turnsPerPhase": false, "conductorSizes": false, "noInParallel": false, "condBreadth": false, "condHeight": false}
+  },
+  "cost": {
+    "copperCostPerKg": 850,
+    "aluminiumCostPerKg": 235,
+    "coreCostPerKg": 250,
+    "steelCostPerKg": 90,
+    "oilCostPerKg": 80,
+    "insulationCostPerKg": 170,
+    "radiatorCostPerKg": 200
+  },
+  "radialGaps": {"coreToLv": null, "lvToHv": null, "hvToOuter": null},
+  "lvWindingType": "FOIL",
+  "hvWindingType": "DISC",
+  "lvCurrentDensity": 2.37,
+  "hvCurrentDensity": 2.37,
+  "outerWindingType": "HELICAL",
+  "outerCurrentDensity": 2.37,
+  "outerWindings": {"isEnamel": false}
+}

@@ -35,6 +35,7 @@ from api.services.windingFormulae import (
     get_rw,
     get_v0,
     get_wire_length,
+    resolve_clearance,
 )
 
 INSULATION_COMPRESSION = 0.93
@@ -392,6 +393,7 @@ def build_hv_section_results(
     user_current_density = raw_winding.currentDensity
     user_turns_per_layer = raw_winding.turnsPerLayer
     user_no_of_layers = raw_winding.noOfLayers
+    user_end_clearance = raw_winding.endClearances
     user_radial_parallel = raw_winding.radialParallelCond
     user_conductor_geometry_provided = (
         user_cond_breadth is not None
@@ -411,6 +413,8 @@ def build_hv_section_results(
         safe_float(hv_source.get("hvEndClearance"), 0.0),
     )
     section_end_clearance = previous_end_clearance + 20.0 if post_hv_section else previous_end_clearance
+    if post_hv_section:
+        section_end_clearance = resolve_clearance(section_end_clearance, user_end_clearance)
     if allocated_turns <= 0:
         current_per_phase = safe_float(hv_source.get("hvCurrentPerPhase"), 0.0)
         target_current_density = safe_float(current_density_override, 0.0)
