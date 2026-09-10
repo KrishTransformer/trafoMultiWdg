@@ -270,7 +270,8 @@ def get_hv_volts_per_phase(voltage_value, vector_group):
 def get_turns_per_phase(volts_per_phase, volts_per_turn, turns_from_user=None, vector_group=None, is_lv=None):
     if turns_from_user is not None:
         return int(math.ceil(turns_from_user))
-    return int(math.ceil(volts_per_phase / volts_per_turn))
+    calculated_turns = two_digit_decimal(volts_per_phase / volts_per_turn)
+    return int(math.ceil(calculated_turns))
 
 
 def get_revised_volts_per_turn(volts_per_phase, turns_per_phase, vector_group=None):
@@ -1173,8 +1174,11 @@ def get_core_weight(core_length, net_core_area):
     return next_integer(core_length * net_core_area * 7.65 * math.pow(10, -6))
 
 
-def get_core_loss(core_weight, build_factor, specific_loss):
-    return next_5or0_integer(core_weight * build_factor * specific_loss)
+def get_core_loss(core_weight, build_factor, specific_loss, frequency=None):
+    core_loss = core_weight * build_factor * specific_loss
+    if frequency == 60:
+        core_loss *= 1.32
+    return next_5or0_integer(core_loss)
 
 
 def get_tank_loss(kva, phase_current, low_voltage, tank_loss=None, dry_type=False):

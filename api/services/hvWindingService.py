@@ -586,7 +586,7 @@ def calculate_hv_windings(multi_winding, lv_results):
         multi_winding.frequency,
         getattr(getattr(multi_winding, "core", None), "wKgGrade", None),
     )
-    core_loss = get_core_loss(core_weight, getattr(multi_winding, "buildFactor", 1.25), specific_loss)
+    core_loss = get_core_loss(core_weight, getattr(multi_winding, "buildFactor", 1.25), specific_loss, multi_winding.frequency)
     # kW55 is temporarily disabled while we validate the remaining multi-winding flow.
     # kw55 = None
     # if not _is_multi_winding_design(multi_winding):

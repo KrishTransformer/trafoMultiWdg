@@ -29,6 +29,7 @@ from api.services.windingFormulae import (
     get_end_clearance,
     get_hv_hv_gap,
     get_connection_weight,
+    get_core_loss,
     get_lv_hv_gap,
     get_largest_blade,
     get_load_loss,
@@ -39,9 +40,18 @@ from api.services.windingFormulae import (
     get_tank_height,
     get_tank_length,
     get_tank_width,
+    get_turns_per_phase,
     resolve_clearance,
     select_radiators,
 )
+
+
+class TurnsPerPhaseRoundingTests(TestCase):
+    def test_rounds_calculated_turns_to_two_decimals_before_rounding_up(self):
+        self.assertEqual(get_turns_per_phase(249.99, 17.855), 14)
+
+    def test_rounds_up_when_two_decimal_turns_still_have_a_fraction(self):
+        self.assertEqual(get_turns_per_phase(249.99, 17.848), 15)
 
 
 def load_5500kva_three_winding_payload():
@@ -602,6 +612,51 @@ class MultiWdgCalculatorEndpointTests(TestCase):
             auto_response.json()["results"]["core"]["area"],
             user_core_response.json()["results"]["core"]["area"],
         )
+
+    def test_fixed_core_diameter_keeps_two_decimal_rounded_turns_during_impedance_retry(self):
+        payload = {
+            "windingSelection": "2 Wdg (LV and HV-Main)",
+            "kVA": 1500,
+            "kValue": 0.45,
+            "frequency": 50,
+            "fluxDensity": 1.6888,
+            "vectorGroup": "Dyn11",
+            "buildFactor": 1.25,
+            "limitEz": 6.25,
+            "lowVoltage": 433,
+            "highVoltage": 11000,
+            "lvWindingType": "FOIL",
+            "hvWindingType": "HELICAL",
+            "lvCurrentDensity": 4.24,
+            "hvCurrentDensity": 4.24,
+            "lvConductorMaterial": "COPPER",
+            "hvConductorMaterial": "COPPER",
+            "lvWindings": {"ducts": 1, "ductSize": 6},
+            "hvWindings": {
+                "condInsulation": 0.4,
+                "noOfLayers": 9.64,
+                "endClearances": 51,
+            },
+            "core": {
+                "coreDia": 260,
+                "coreMaterial": "NipM4",
+                "coreType": "PRIME",
+            },
+            "radialGaps": {"coreToLv": 8, "lvToHv": 12},
+        }
+
+        response = self.client.post(
+            "/api/multiWdgCalculator/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        results = response.json()["results"]
+        self.assertEqual(results["ez"]["iterations"], 2)
+        self.assertEqual(results["lvTurnsPerPhase"], 14)
+        self.assertEqual(results["revisedVoltsPerTurn"], 17.856)
+        self.assertEqual(results["revisedFluxDensity"], 1.6288)
 
     def test_multi_wdg_calculator_defaults_to_2wdg_selection(self):
         payload = {
@@ -3378,3 +3433,10 @@ class CoreMaterialSpecificLossTests(TestCase):
 
     def test_specific_loss_respects_explicit_wkg_grade(self):
         self.assertEqual(get_specific_loss("NipM4", 1.7, 50, 2.22), 2.22)
+
+    def test_core_loss_applies_sixty_hertz_factor_like_core_service(self):
+        base_core_loss = get_core_loss(100, 1.25, 1.72, 50)
+        sixty_hz_core_loss = get_core_loss(100, 1.25, 1.72, 60)
+
+        self.assertEqual(base_core_loss, next_5or0_integer(100 * 1.25 * 1.72))
+        self.assertEqual(sixty_hz_core_loss, next_5or0_integer(100 * 1.25 * 1.72 * 1.32))

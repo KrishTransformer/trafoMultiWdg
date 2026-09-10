@@ -1893,6 +1893,7 @@ def calculate_circ_wdg(
         recomputed_core_weight,
         getattr(multi_winding, "buildFactor", 1.25),
         core.wKgGrade,
+        multi_winding.frequency,
     )
     recomputed_tank_loss = get_tank_loss(
         multi_winding.kVA,
