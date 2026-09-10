@@ -51,6 +51,7 @@ from api.services.windingFormulae import (
     get_specific_loss,
     get_tank_loss,
     get_test_and_imp_test,
+    get_top_oil_temp,
     get_vector_group,
     get_voltage_regulation,
     h1h2,
@@ -1335,6 +1336,7 @@ def _apply_defaults(multi_winding):
     multi_winding.lowVoltage = get_low_voltage(multi_winding.lowVoltage)
     multi_winding.highVoltage = get_high_voltage(multi_winding.highVoltage)
     multi_winding.fluxDensity = get_flux_density(multi_winding.fluxDensity, dry_type)
+    multi_winding.topOilTemp = get_top_oil_temp(getattr(multi_winding, "topOilTemp", None))
     multi_winding.lvConductorMaterial = (multi_winding.lvConductorMaterial or COPPER).upper()
     multi_winding.hvConductorMaterial = (multi_winding.hvConductorMaterial or COPPER).upper()
     multi_winding.corseConductorMaterial = (getattr(multi_winding, "corseConductorMaterial", None) or multi_winding.hvConductorMaterial).upper()
@@ -1931,6 +1933,7 @@ def calculate_circ_wdg(
         "fluxDensity": multi_winding.fluxDensity,
         "coreMaterial": core.coreMaterial,
         "wKgGrade": core.wKgGrade,
+        "topOilTemp": multi_winding.topOilTemp,
         "lowVoltage": multi_winding.lowVoltage,
         "highVoltage": multi_winding.highVoltage,
         "vectorGroup": multi_winding.vectorGroup,
@@ -2075,6 +2078,7 @@ def calculate_circ_wdg(
             "lvEndClearance": lv_results["lvEndClearance"],
             "hvEndClearance": hv_winding_model.endClearances,
             "coreLoss": recomputed_core_loss,
+            "topOilTemp": multi_winding.topOilTemp,
             "phaseVoltages": phase_voltage_division,
             "phaseVoltageDivision": phase_voltage_division,
             "calculatedRadialGaps": calculated_radial_gaps,

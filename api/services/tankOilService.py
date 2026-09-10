@@ -38,7 +38,7 @@ from api.services.windingFormulae import (
     get_tank_width,
     get_tap_ins_weight,
     get_tap_lead_weight,
-    get_top_oil_temperature,
+    get_top_oil_temp,
     get_top_yoke_to_cover,
     get_total_radiator_weight,
     get_total_steel_weight,
@@ -140,32 +140,29 @@ def _iter_high_side_sections(hv_results, corse_results, fine_results, outer_resu
     )
 
 
-def _collect_multi_winding_kw55_inputs(lv_results, section_results):
+def _collect_multi_winding_load_losses(lv_results, section_results):
     winding_load_losses = [_safe_float(lv_results.get("lvLoadLoss"), 0.0)]
-    winding_gradients = [_safe_float(lv_results.get("lvGradient"), 0.0)]
 
     for _, section in section_results:
         if not section:
             continue
         winding_load_losses.append(_section_float(section, "loadLoss", "hvLoadLossAtNormal", default=0.0))
-        winding_gradients.append(_section_float(section, "gradient", "tempGradDegC", "hvGradient", default=0.0))
 
-    return winding_load_losses, winding_gradients
+    return winding_load_losses
 
 
-def _get_kw55_value(multi_winding, lv_results, raw_hv_results, high_side_sections, core_loss, tank_loss):
+def _get_kw55_value(multi_winding, lv_results, raw_hv_results, high_side_sections, core_loss, tank_loss, top_oil_temp):
     if multi_winding.windings == "2 Wdg (LV and HV-Main)":
         return get_kw55(
             core_loss,
             _safe_float(lv_results.get("lvLoadLoss"), 0.0),
             _safe_float(raw_hv_results.get("hvLoadLossAtLowest", raw_hv_results.get("hvLoadLossAtNormal", 0.0)), 0.0),
             tank_loss,
-            _safe_float(lv_results.get("lvGradient"), 0.0),
-            _safe_float(raw_hv_results.get("hvGradient"), 0.0),
+            top_oil_temp,
         )
 
-    winding_load_losses, winding_gradients = _collect_multi_winding_kw55_inputs(lv_results, high_side_sections)
-    return get_kw55_for_multiple_windings(core_loss, winding_load_losses, tank_loss, winding_gradients)
+    winding_load_losses = _collect_multi_winding_load_losses(lv_results, high_side_sections)
+    return get_kw55_for_multiple_windings(core_loss, winding_load_losses, tank_loss, top_oil_temp)
 
 
 def _get_outermost_section_name(coil_dimensions):
@@ -189,15 +186,6 @@ def _sum_high_side_procurement_weights(high_side_sections):
 
 def _sum_high_side_bare_weights(high_side_sections):
     return sum(_section_float(section, "bareWeight", "hvBareWeight", default=0.0) for _, section in high_side_sections if section)
-
-
-def _max_high_side_gradient(high_side_sections):
-    gradients = [
-        _section_float(section, "gradient", "tempGradDegC", "hvGradient", default=0.0)
-        for _, section in high_side_sections
-        if section
-    ]
-    return max(gradients) if gradients else 0.0
 
 
 def _sum_high_side_material_cost(multi_winding, high_side_sections):
@@ -364,7 +352,7 @@ def calculate_tank_and_oil(
     is_oltc = bool(getattr(multi_winding, "isOLTC", False))
     trans_cost_type = getattr(multi_winding, "transCostType", ECONOMIC)
     radiator_type = _get_radiator_type(multi_winding)
-    top_oil_temp_user = _safe_float(getattr(multi_winding, "topOilTemp", None), 50.0)
+    top_oil_temp_user = get_top_oil_temp(getattr(multi_winding, "topOilTemp", None))
 
     connection_gap = get_connection_gap(multi_winding.highVoltage, getattr(multi_winding, "connectionGap", None))
     wdg_tank_gap = get_wdg_to_tank_gap(multi_winding.highVoltage, multi_winding.kVA, getattr(multi_winding, "wdgToTankGap", None))
@@ -479,11 +467,12 @@ def calculate_tank_and_oil(
         high_side_sections,
         recomputed_core_loss,
         recomputed_tank_loss,
+        top_oil_temp_user,
     )
 
     heat_dis_by_tank_walls = 0.0
     heat_to_be_dissipated = float(kw55)
-    top_oil_temperature = 0.0
+    top_oil_temperature = top_oil_temp_user
     radiator_area = 0.0
     radiator_height = 0
     radiator_width = 0
@@ -505,10 +494,6 @@ def calculate_tank_and_oil(
     if radiator_type == "RADIATOR":
         heat_dis_by_tank_walls = get_heat_dis_by_tank_wall(tank_length, tank_width, tank_height)
         heat_to_be_dissipated -= heat_dis_by_tank_walls
-        top_oil_temperature = get_top_oil_temperature(
-            _safe_float(lv_results.get("lvGradient"), 0.0),
-            _max_high_side_gradient(high_side_sections),
-        )
         radiator_area = get_radiator_area(heat_to_be_dissipated, top_oil_temperature, top_oil_temp_user)
         radiator_height = get_radiator_height(tank_height, largest_blade, yoke_insulation)
         radiator_width = get_radiator_width(radiator_height, getattr(multi_winding, "radiatorWidth", None))
@@ -668,6 +653,7 @@ def calculate_tank_and_oil(
         "radiatorSection": radiator_section,
         "heatDisByTankWalls": heat_dis_by_tank_walls,
         "heatToBeDissipated": heat_to_be_dissipated,
+        "topOilTemp": top_oil_temp_user,
         "topOilTemperature": top_oil_temperature,
         "corrugationArea": corrugation_area,
         "corrugationSlitsOnLength": corrugation_slits_on_length,
