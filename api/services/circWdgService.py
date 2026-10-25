@@ -848,7 +848,7 @@ def _build_tap_turns(tap_count, turns_per_tap):
 
 
 def _allocate_from_turn_share(total_turns, total_taps, share, volts_per_turn, turns_per_tap, total_voltage=None):
-    allocated_turns = two_digit_decimal(safe_float(total_turns, 0.0) * safe_float(share, 0.0))
+    allocated_turns = safe_float(total_turns, 0.0) * safe_float(share, 0.0)
     allocated_taps = two_digit_decimal(safe_float(total_taps, 0.0) * safe_float(share, 0.0))
     inferred_turns_per_tap = safe_float(turns_per_tap, 0.0)
     if inferred_turns_per_tap <= 0 and safe_float(total_taps, 0.0) > 0:
@@ -886,6 +886,26 @@ def _apply_section_allocation_fallbacks(multi_winding, allocations, volts_per_tu
             continue
         allocation["turns"] = fallback_turns
         allocation["voltsPerPhase"] = _vb_int(fallback_turns * volts_per_turn)
+
+
+def _round_section_turns(selection, allocations):
+    if selection == "5 Wdg (LV, HV-Main, Corse, Fine and Outer)":
+        coarse_turns = next_integer(allocations["corse"]["turns"])
+        # An even coarse count keeps both half-windings at whole turns.
+        coarse_turns += coarse_turns % 2
+        allocations["corse"]["turns"] = coarse_turns
+        allocations["fine"]["turns"] = coarse_turns // 2
+        allocations["outer"]["turns"] = coarse_turns // 2
+    elif selection == "3 Wdg (LV, HV-Main and Outer)":
+        allocations["outer"]["turns"] = next_integer(allocations["outer"]["turns"])
+    elif selection in (
+        "4 Wdg (LV, HV-Main, Corse and Outer)",
+        "4 Wdg (LV, HV-Main, Fine and Outer)",
+    ):
+        regulating_winding = "corse" if "Corse" in selection else "fine"
+        turns = next_integer(allocations[regulating_winding]["turns"])
+        allocations[regulating_winding]["turns"] = turns
+        allocations["outer"]["turns"] = turns
 
 
 def _seed_hv_main_winding(winding, hv_results, winding_type=None):
@@ -1022,6 +1042,7 @@ def _get_high_side_distribution(multi_winding, lv_results, hv_results):
         )
 
     _apply_section_allocation_fallbacks(multi_winding, allocations, volts_per_turn)
+    _round_section_turns(selection, allocations)
     return allocations
 
 

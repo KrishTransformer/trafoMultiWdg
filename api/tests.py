@@ -2775,6 +2775,56 @@ class RadiatorSelectionTests(TestCase):
 
 
 class HighSideDistributionTests(TestCase):
+    def test_5wdg_rounds_coarse_up_to_even_before_halving(self):
+        for tap_range, coarse, half in (
+            (40.002, 22, 11),
+            (40.02, 22, 11),
+            (42, 22, 11),
+            (42.02, 22, 11),
+            (44, 22, 11),
+            (44.02, 24, 12),
+            (0, 0, 0),
+        ):
+            with self.subTest(tap_range=tap_range):
+                multi_winding = MultiWindings(
+                    windings="5 Wdg (LV, HV-Main, Corse, Fine and Outer)",
+                    tapStepPositive=2,
+                    tapStepNegative=2,
+                )
+                hv_results = {**self.hv_results, "hvTurnsAtHighest": 100 + tap_range}
+                distribution = _get_high_side_distribution(multi_winding, self.lv_results, hv_results)
+                self.assertEqual(distribution["corse"]["turns"], coarse)
+                self.assertEqual(distribution["fine"]["turns"], half)
+                self.assertEqual(distribution["outer"]["turns"], half)
+
+    def test_3wdg_rounds_outer_turns_up(self):
+        for tap_range, expected in ((40.001, 41), (40.01, 41), (40.99, 41), (40, 40)):
+            with self.subTest(tap_range=tap_range):
+                multi_winding = MultiWindings(
+                    windings="3 Wdg (LV, HV-Main and Outer)",
+                    tapStepPositive=2,
+                    tapStepNegative=2,
+                )
+                hv_results = {**self.hv_results, "hvTurnsAtHighest": 100 + tap_range}
+                distribution = _get_high_side_distribution(multi_winding, self.lv_results, hv_results)
+                self.assertEqual(distribution["outer"]["turns"], expected)
+
+    def test_4wdg_rounds_regulating_turns_up_and_matches_outer(self):
+        for name, label in (("corse", "Corse"), ("fine", "Fine")):
+            for tap_range, expected in ((40.002, 21), (40.02, 21), (41.98, 21), (40, 20)):
+                with self.subTest(winding=name, tap_range=tap_range):
+                    multi_winding = MultiWindings(
+                        windings=f"4 Wdg (LV, HV-Main, {label} and Outer)",
+                        tapStepPositive=2,
+                        tapStepNegative=2,
+                    )
+                    hv_results = {**self.hv_results, "hvTurnsAtHighest": 100 + tap_range}
+                    distribution = _get_high_side_distribution(multi_winding, self.lv_results, hv_results)
+                    self.assertEqual(distribution[name]["turns"], expected)
+                    self.assertEqual(distribution["outer"]["turns"], expected)
+                    inactive = "fine" if name == "corse" else "corse"
+                    self.assertEqual(distribution[inactive]["turns"], 0)
+
     def setUp(self):
         self.lv_results = {
             "revisedVoltsPerTurn": 5.0,
